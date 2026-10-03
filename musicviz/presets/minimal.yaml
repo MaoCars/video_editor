@@ -1,0 +1,24 @@
+# Plantilla mínima para empezar desde cero.
+name: minimal
+output:
+  width: 1920
+  height: 1080
+  fps: 60
+  codec: auto
+audio:
+  file: "{audio}"
+  bands: 64
+background:
+  type: solid
+  color: "#000000"
+layers:
+  - type: bars
+    colors: ["#ffffff"]
+    height: 0.3
+    mirror: true
+    rounded: true
+effects:
+  - type: bloom
+    radius: 20
+    threshold: 0.7
+    strength: 0.5

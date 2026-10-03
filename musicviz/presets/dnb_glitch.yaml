@@ -1,0 +1,116 @@
+# Estilo agresivo para dubstep / drum & bass: barras simétricas con espejo, glitch y
+# pixelado disparados por los kicks, strobe y desenfoque radial en los drops.
+name: dnb_glitch
+output:
+  width: 1920
+  height: 1080
+  fps: 60
+  codec: auto
+  bitrate: 18M
+audio:
+  file: "{audio}"
+  bands: 80
+  fmin: 30
+  fmax: 16000
+  smoothing: {attack: 0.85, release: 0.3}
+  beat_sensitivity: 1.2
+background:
+  type: gradient
+  colors: ["#000000", "#140014", "#000000"]
+  angle: 90
+  pulse: 0.04
+  react: 0.2
+  react_trigger: kick
+layers:
+  - type: particles
+    count: 100
+    burst: 80
+    burst_trigger: kick
+    burst_threshold: 0.4
+    emitter: center
+    direction: out
+    speed: 120
+    burst_speed: 700
+    size: 2.5
+    size_variance: 2
+    lifetime: 1.2
+    shape: streak
+    colors: ["#39ff14", "#00ffff", "#ff00ff"]
+    glow: 0.6
+  - type: bars
+    bands: 80
+    width: 0.92
+    height: 0.36
+    position: [0.5, 0.5]
+    gap: 0.3
+    rounded: true
+    mirror: true
+    symmetric: true
+    style: solid
+    colors: ["#ff00ff", "#00ffff", "#39ff14"]
+    gradient: index
+    bass_boost: 0.25
+    glow: 0.45
+    glow_radius: 26
+  - type: waveform
+    style: line
+    amplitude: 0.12
+    position: [0.5, 0.5]
+    width: 0.92
+    thickness: 2
+    colors: ["#ffffff"]
+    mirror: true
+    opacity: 0.55
+    glow: 0.3
+  - type: text
+    text: "DROP THE BASS"
+    size: 0.06
+    position: [0.5, 0.12]
+    color: "#ffffff"
+    pulse: 0.08
+    pulse_trigger: kick
+    letter_spacing: 8
+    uppercase: true
+    glow: 0.5
+effects:
+  - type: bloom
+    radius: 30
+    threshold: 0.5
+    strength: 0.6
+  - type: glitch
+    trigger: kick
+    threshold: 0.0
+    intensity: 1.0
+    block_shift: 0.8
+    rgb_split: 1.0
+    scanlines: 0.35
+    noise: 0.2
+    blocks: 12
+    probability: 0.85
+    invert: 0.08
+  - type: pixelate
+    trigger: drop
+    size: 10
+    intensity: 0.6
+  - type: radial_blur
+    trigger: kick
+    amount: 0.06
+  - type: shake
+    trigger: kick
+    amount: 14
+    rotation: 0.5
+    zoom: 0.035
+  - type: chromatic
+    trigger: bass
+    threshold: 0.5
+    amount: 8
+  - type: strobe
+    trigger: kick
+    intensity: 0.12
+  - type: scanlines
+    spacing: 4
+    darkness: 0.18
+  - type: grain
+    amount: 0.04
+  - type: vignette
+    strength: 0.6

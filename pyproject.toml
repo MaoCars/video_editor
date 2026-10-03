@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "musicviz"
+version = "0.1.0"
+description = "Generador de videos music visualizer (espectros, partículas, glitch) estilo Trap Nation / Monstercat / NCS"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "opencv-python>=4.8",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "typer>=0.9",
+    "rich>=13.0",
+    "soundfile>=0.12",
+    "pillow>=10.1",
+]
+
+[project.optional-dependencies]
+preview-audio = ["sounddevice>=0.4"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+musicviz = "musicviz.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["musicviz*"]
+
+[tool.setuptools.package-data]
+musicviz = ["presets/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

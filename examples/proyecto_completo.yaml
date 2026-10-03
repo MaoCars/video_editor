@@ -1,0 +1,146 @@
+# Ejemplo comentado con la mayoría de opciones. Copia este archivo, cambia audio.file
+# y ejecuta: musicviz render examples/proyecto_completo.yaml
+name: ejemplo_completo
+
+output:
+  path: ejemplo_completo.mp4
+  width: 1920
+  height: 1080
+  fps: 60
+  codec: auto           # h264_nvenc si hay GPU NVIDIA; si no, libx264
+  bitrate: 16M
+  workers: 0            # 0 = automático
+
+audio:
+  file: cancion.mp3     # ruta relativa a este archivo o absoluta
+  start: 0
+  bands: 80
+  fmin: 30
+  fmax: 16000
+  smoothing: {attack: 0.75, release: 0.22}
+  spatial_smoothing: 0.8
+  gain: 1.0
+  gamma: 0.95
+  normalize: hybrid
+  tilt: 0.7
+  dynamic_range: 50
+  beat_sensitivity: 1.0
+
+background:
+  type: radial          # solid | gradient | radial | image
+  colors: ["#15052b", "#040208"]
+  # type: image
+  # image: portada.jpg
+  # image_fit: cover
+  # blur: 12
+  # darken: 0.4
+  pulse: 0.03           # zoom con el kick
+  react: 0.12           # brillo con los graves
+  react_trigger: bass
+
+layers:
+  # Partículas de fondo que se aceleran con la energía y explotan en cada kick
+  - type: particles
+    count: 180
+    burst: 45
+    burst_trigger: kick
+    burst_threshold: 0.3
+    emitter: ring
+    emitter_radius: 0.23
+    direction: out
+    speed: 30
+    burst_speed: 400
+    size: 2.5
+    size_variance: 1.5
+    lifetime: 1.8
+    shape: circle
+    colors: ["#ff2a6d", "#ffb347", "#ffffff"]
+    glow: 0.5
+    blend: add
+
+  # Espectro circular estilo Trap Nation
+  - type: circle
+    position: [0.5, 0.5]
+    radius: 0.2
+    length: 0.25
+    thickness: 5
+    mirror: true
+    style: bars           # bars | line | filled | dots | rays
+    colors: ["#ff2a6d", "#ff7a00", "#ffd166"]
+    gradient: angle
+    rotation: -90
+    rotation_speed: 0
+    pulse: 0.14
+    pulse_trigger: kick
+    ring: true
+    ring_thickness: 3
+    rings: 2
+    ring_spread: 0.07
+    glow: 0.8
+    glow_radius: 30
+
+  # Logo/portada en el centro con pulso (quita el comentario y pon tu PNG)
+  # - type: image
+  #   file: logo.png
+  #   scale: 0.28
+  #   circle_mask: true
+  #   pulse: 0.08
+  #   pulse_trigger: kick
+
+  # Forma de onda discreta abajo
+  - type: waveform
+    style: line
+    position: [0.5, 0.85]
+    width: 0.6
+    amplitude: 0.05
+    thickness: 2
+    colors: ["#ff2a6d", "#ffd166"]
+    opacity: 0.7
+    glow: 0.3
+
+  - type: text
+    text: "ARTISTA - TÍTULO"
+    position: [0.5, 0.93]
+    size: 0.045
+    color: "#ffffff"
+    letter_spacing: 4
+    pulse: 0.03
+    glow: 0.4
+
+  - type: progress
+    position: [0.5, 0.975]
+    width: 0.6
+    thickness: 3
+    color: "#ffffff"
+    bg_color: "#ffffff30"
+    show_time: false
+
+effects:
+  - type: bloom
+    radius: 36
+    threshold: 0.5
+    strength: 0.9
+  - type: shake
+    trigger: kick
+    amount: 10
+    zoom: 0.025
+  - type: chromatic
+    trigger: kick
+    amount: 6
+  # Glitch sólo en el drop (segundos 60 a 90)
+  - type: glitch
+    trigger: kick
+    start: 60
+    end: 90
+    intensity: 1.0
+    probability: 0.7
+    block_shift: 0.8
+    rgb_split: 1.0
+    scanlines: 0.3
+    noise: 0.15
+  - type: color
+    hue_speed: 0
+    saturation: 1.1
+  - type: vignette
+    strength: 0.55
+    softness: 0.65

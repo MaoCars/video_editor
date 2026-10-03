@@ -1,0 +1,79 @@
+# Estilo Monstercat: barras blancas/limpias en la zona inferior, imagen de portada
+# a la izquierda y texto grande. Minimalista y elegante.
+name: monstercat
+output:
+  width: 1920
+  height: 1080
+  fps: 60
+  codec: auto
+  bitrate: 16M
+audio:
+  file: "{audio}"
+  bands: 64
+  fmin: 40
+  fmax: 12000
+  smoothing: {attack: 0.6, release: 0.18}
+  spatial_smoothing: 1.2
+background:
+  type: gradient
+  colors: ["#0f1322", "#1c2541", "#0f1322"]
+  angle: 35
+  react: 0.08
+  react_trigger: bass
+layers:
+  - type: bars
+    bands: 64
+    width: 0.9
+    height: 0.33
+    position: [0.5, 0.62]
+    gap: 0.25
+    rounded: false
+    mirror: false
+    symmetric: false
+    style: solid
+    colors: ["#ffffff"]
+    gradient: index
+    min_height: 0.006
+    glow: 0.25
+    glow_radius: 18
+  - type: particles
+    count: 120
+    burst: 0
+    direction: up
+    speed: 30
+    energy_speed: 2
+    size: 2
+    size_variance: 1
+    colors: ["#ffffff", "#9ec5ff"]
+    opacity: 0.6
+    twinkle: 0.6
+  - type: text
+    text: "TÍTULO DE LA CANCIÓN"
+    size: 0.075
+    position: [0.5, 0.78]
+    color: "#ffffff"
+    pulse: 0.0
+    letter_spacing: 2
+    glow: 0.2
+  - type: text
+    text: "Artista"
+    size: 0.04
+    position: [0.5, 0.86]
+    color: "#c7d2fe"
+    pulse: 0.0
+    glow: 0.0
+  - type: progress
+    position: [0.5, 0.94]
+    width: 0.9
+    thickness: 3
+    color: "#ffffff"
+    bg_color: "#ffffff30"
+    show_time: true
+effects:
+  - type: bloom
+    radius: 28
+    threshold: 0.7
+    strength: 0.5
+  - type: vignette
+    strength: 0.4
+    softness: 0.7

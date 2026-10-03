@@ -1,0 +1,89 @@
+# Estilo NCS: anillo con espectro en línea rellena, colores neón, logo central y
+# partículas flotando; brillo cálido y rotación lenta.
+name: ncs
+output:
+  width: 1920
+  height: 1080
+  fps: 60
+  codec: auto
+  bitrate: 16M
+audio:
+  file: "{audio}"
+  bands: 128
+  fmin: 40
+  fmax: 15000
+  smoothing: {attack: 0.7, release: 0.22}
+background:
+  type: gradient
+  colors: ["#031b2e", "#0a3d62", "#120c3a"]
+  angle: 120
+  pulse: 0.02
+  react: 0.1
+  react_trigger: bass
+layers:
+  - type: particles
+    count: 220
+    burst: 25
+    burst_trigger: beat
+    emitter: screen
+    direction: up
+    speed: 40
+    burst_speed: 200
+    size: 2.2
+    size_variance: 1.4
+    lifetime: 2.5
+    colors: ["#00e5ff", "#7c4dff", "#ffffff"]
+    glow: 0.5
+  - type: circle
+    radius: 0.2
+    length: 0.18
+    thickness: 3
+    mirror: true
+    style: filled
+    colors: ["#00e5ff", "#7c4dff", "#ff4ecd"]
+    gradient: angle
+    rotation_speed: 6
+    pulse: 0.1
+    ring: true
+    ring_thickness: 4
+    ring_color: "#ffffff"
+    glow: 0.7
+    opacity: 0.85
+  - type: circle
+    radius: 0.2
+    length: 0.2
+    thickness: 2
+    mirror: true
+    style: line
+    colors: ["#ffffff"]
+    rotation_speed: 6
+    pulse: 0.1
+    ring: false
+    glow: 0.4
+  - type: waveform
+    style: line
+    amplitude: 0.06
+    position: [0.5, 0.88]
+    width: 0.6
+    thickness: 2
+    colors: ["#00e5ff", "#ff4ecd"]
+    glow: 0.4
+    opacity: 0.8
+  - type: text
+    text: "NCS STYLE"
+    size: 0.05
+    position: [0.5, 0.5]
+    color: "#ffffff"
+    pulse: 0.05
+    letter_spacing: 6
+    glow: 0.6
+effects:
+  - type: bloom
+    radius: 40
+    threshold: 0.45
+    strength: 1.0
+  - type: color
+    hue_speed: 4
+    saturation: 1.15
+  - type: vignette
+    strength: 0.5

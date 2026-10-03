@@ -1,0 +1,76 @@
+# Estilo Trap Nation: círculo central con barras radiales simétricas, pulso con el bass,
+# partículas que explotan en cada golpe, bloom intenso y shake sutil.
+name: trap_nation
+output:
+  width: 1920
+  height: 1080
+  fps: 60
+  codec: auto
+  bitrate: 16M
+audio:
+  file: "{audio}"
+  bands: 96
+  fmin: 35
+  fmax: 14000
+  smoothing: {attack: 0.75, release: 0.2}
+  gamma: 0.9
+background:
+  type: radial
+  colors: ["#1b0a2e", "#05030a"]
+  pulse: 0.025
+  react: 0.15
+  react_trigger: kick
+layers:
+  - type: particles
+    count: 160
+    burst: 50
+    burst_trigger: kick
+    emitter: ring
+    emitter_radius: 0.24
+    direction: out
+    speed: 25
+    burst_speed: 420
+    size: 2.6
+    size_variance: 1.6
+    lifetime: 1.8
+    colors: ["#ff2a6d", "#ffb347", "#ffffff"]
+    glow: 0.6
+  - type: circle
+    radius: 0.21
+    length: 0.26
+    thickness: 5
+    mirror: true
+    style: bars
+    colors: ["#ff2a6d", "#ff7a00", "#ffd166"]
+    gradient: angle
+    pulse: 0.14
+    pulse_trigger: kick
+    ring: true
+    ring_thickness: 3
+    rings: 2
+    ring_spread: 0.07
+    glow: 0.8
+    glow_radius: 30
+  - type: text
+    text: "ARTISTA - TÍTULO"
+    size: 0.045
+    position: [0.5, 0.9]
+    color: "#ffffff"
+    pulse: 0.03
+    letter_spacing: 4
+    glow: 0.5
+    opacity: 0.9
+effects:
+  - type: bloom
+    radius: 36
+    threshold: 0.5
+    strength: 0.9
+  - type: shake
+    trigger: kick
+    amount: 10
+    zoom: 0.025
+  - type: chromatic
+    trigger: kick
+    amount: 6
+  - type: vignette
+    strength: 0.55
