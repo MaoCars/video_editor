@@ -8,6 +8,7 @@ import numpy as np
 
 from ..audio.analysis import AudioFeatures
 from ..config import ProjectConfig
+from .canvas import over_checkerboard
 from .engine import Scene, output_size
 
 
@@ -38,6 +39,8 @@ def preview(project: ProjectConfig, features: AudioFeatures, scale: float = 0.5,
     try:
         while index < features.n_frames:
             frame = scene.render(index)
+            if frame.shape[2] == 4:
+                frame = over_checkerboard(frame)
             bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             cv2.imshow(name, bgr)
             if stream is not None and not paused:

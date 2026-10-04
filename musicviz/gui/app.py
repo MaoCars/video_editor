@@ -20,7 +20,9 @@ from pydantic import BaseModel
 
 from ..audio.analysis import AudioFeatures
 from ..config import EffectConfig, LayerConfig, ProjectConfig, get_args_of_union
+from ..layers.text import available_fonts
 from ..presets import load_preset, preset_names
+from ..render.canvas import over_checkerboard
 from .fields import FieldSpec, apply_value, field_specs, format_value, replace_submodel
 from .recent import add_recent, clear_recent, load_recent, remove_recent
 
@@ -108,6 +110,14 @@ class ModelForm(ttk.Frame):
                 w.bind("<<ComboboxSelected>>", lambda e, s=spec, v=var: self._commit(s, v.get()))
             elif spec.kind == "str" and spec.readonly:
                 ttk.Label(self, text=str(value), font=("TkDefaultFont", 9, "bold")).grid(row=row, column=1, sticky="w")
+            elif spec.kind == "font":
+                var = tk.StringVar(value=str(value) if value else "")
+                w = ttk.Combobox(self, textvariable=var, values=[""] + list(available_fonts()), width=26)
+                w.grid(row=row, column=1, sticky="ew")
+                w.bind("<<ComboboxSelected>>", lambda e, s=spec, v=var: self._commit(s, v.get()))
+                w.bind("<Return>", lambda e, s=spec, v=var: self._commit(s, v.get()))
+                w.bind("<FocusOut>", lambda e, s=spec, v=var: self._commit(s, v.get()))
+                ttk.Button(self, text="…", width=3, command=lambda s=spec, v=var: self._pick_font_file(s, v)).grid(row=row, column=2, padx=2)
             else:
                 var = tk.StringVar(value=format_value(value, spec))
                 entry = ttk.Entry(self, textvariable=var, width=28)
@@ -159,6 +169,12 @@ class ModelForm(ttk.Frame):
         else:
             var.set(var.get().rstrip(", ") + ", " + hexcol)
         self._commit(spec, var.get(), widget)
+
+    def _pick_font_file(self, spec: FieldSpec, var: tk.StringVar):
+        path = filedialog.askopenfilename(parent=self, title="Archivo de fuente", filetypes=[("Fuentes", "*.ttf *.otf *.ttc"), ("Todos", "*.*")])
+        if path:
+            var.set(path)
+            self._commit(spec, path)
 
     def _pick_file(self, spec: FieldSpec, var: tk.StringVar, widget: tk.Widget):
         if spec.name == "path":
@@ -663,6 +679,8 @@ class App(tk.Tk):
         return self._features
 
     def _show_image(self, img: np.ndarray):
+        if img.shape[2] == 4:
+            img = over_checkerboard(img)
         lw = max(self.preview_label.winfo_width(), 320)
         lh = max(self.preview_label.winfo_height(), 180)
         h, w = img.shape[:2]

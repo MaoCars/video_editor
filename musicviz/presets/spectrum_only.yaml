@@ -1,0 +1,31 @@
+# Sólo el espectro con fondo transparente: para superponerlo en tu editor de video (Premiere,
+# DaVinci, After Effects, CapCut...) o en OBS. Salida .mov ProRes 4444 con canal alfa.
+# Cambia el códec a vp9_alpha (.webm), qtrle (.mov sin pérdida) o png_sequence (carpeta de PNG).
+name: spectrum_only
+output:
+  width: 1920
+  height: 1080
+  fps: 60
+  codec: auto
+  transparent: true
+audio:
+  file: "{audio}"
+  bands: 96
+  fmin: 35
+  fmax: 14000
+  smoothing: {attack: 0.75, release: 0.2}
+layers:
+  - type: circle
+    radius: 0.22
+    length: 0.26
+    thickness: 5
+    mirror: true
+    style: bars
+    colors: ["#ffffff"]
+    pulse: 0.12
+    pulse_trigger: kick
+    ring: true
+    ring_thickness: 3
+    glow: 0.6
+    glow_radius: 28
+effects: []

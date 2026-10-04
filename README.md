@@ -96,6 +96,7 @@ Otros comandos:
 | `musicviz presets` | Lista los presets y su descripción |
 | `musicviz analyze cancion.mp3` | Duración, BPM estimado, beats, kicks y "drop" más fuerte |
 | `musicviz check` | Comprueba ffmpeg, NVENC, OpenCV, CPUs |
+| `musicviz fonts [filtro]` | Lista las fuentes del sistema utilizables en `font:` |
 | `musicviz gui [proyecto.yaml]` | Abre la interfaz gráfica |
 | `musicviz render ... --workers 6` | Número de procesos de render en paralelo |
 
@@ -110,6 +111,7 @@ Otros comandos:
 | `ncs` | Anillo con espectro relleno de gradiente neón, rotación lenta, partículas flotando, cambio de tono |
 | `dnb_glitch` | Barras simétricas con espejo, glitch/pixelado en los kicks, strobe y desenfoque radial en los drops |
 | `minimal` | Plantilla mínima para empezar desde cero |
+| `spectrum_only` | Sólo el espectro circular con fondo transparente (.mov con alfa) para superponer en otro editor |
 
 `musicviz init` copia el preset (con comentarios) a tu YAML: edita, guarda y vuelve a
 hacer `snapshot`/`render`. Mira `examples/proyecto_completo.yaml` para un ejemplo comentado
@@ -170,6 +172,9 @@ Cada efecto admite `intensity`, `threshold`, `start` y `end` (ventana en segundo
 ### Capas (`layers`)
 
 Todas admiten `opacity`, `blend` (`normal | add | screen`), `position: [x, y]`, `glow`, `glow_radius`, `enabled`.
+En imágenes y textos, `position` es el punto donde se coloca el **anclaje** (`anchor` en imagen; `align` + `valign` en texto):
+por ejemplo `anchor: left` con `position: [0.05, 0.5]` pega la imagen al borde izquierdo, y `align: right`, `valign: bottom`,
+`position: [0.98, 0.97]` coloca un texto en la esquina inferior derecha.
 
 | type | Parámetros principales |
 |---|---|
@@ -177,8 +182,8 @@ Todas admiten `opacity`, `blend` (`normal | add | screen`), `position: [x, y]`, 
 | `circle` | `radius`, `length`, `thickness`, `mirror`, `inner`, `colors`, `gradient: angle\|value`, `rotation`, `rotation_speed`, `pulse`, `pulse_trigger`, `style: bars\|line\|filled\|dots\|rays`, `ring`, `ring_thickness`, `ring_color`, `rings`, `ring_spread` |
 | `waveform` | `amplitude`, `thickness`, `colors`, `mirror`, `style: line\|filled\|circular\|bars`, `samples`, `width`, `radius`, `smooth` |
 | `particles` | `count` (ambiente), `burst` (por beat), `burst_trigger: beat\|kick`, `burst_threshold`, `size`, `size_variance`, `colors`, `speed`, `burst_speed`, `energy_speed`, `direction: up\|down\|left\|right\|out\|in\|random`, `emitter: screen\|center\|ring\|bottom\|top`, `emitter_radius`, `gravity`, `lifetime`, `shape: circle\|square\|streak`, `react_size`, `twinkle`, `seed` |
-| `image` | `file` (PNG con transparencia recomendado), `scale`, `pulse`, `pulse_trigger`, `rotation`, `rotation_speed`, `circle_mask`, `shake` |
-| `text` | `text`, `font` (nombre o ruta .ttf), `size`, `color`, `pulse`, `pulse_trigger`, `letter_spacing`, `uppercase` |
+| `image` | `file`, `size` (lado mayor, relativo), `aspect` (proporción de la caja; None = la original), `shape: original\|square\|circle\|rounded`, `fit: cover\|contain` (recortar o encajar), `focus: [x, y]` (zona que se conserva al recortar), `anchor` (center, left, right, top, bottom, top_left, top_right, bottom_left, bottom_right), `corner_radius`, `border`, `border_color`, `shadow`, `shadow_blur`, `shadow_offset`, `pulse`, `pulse_trigger`, `rotation`, `rotation_speed`, `shake` |
+| `text` | `text` (usa `\n` para saltos), `font` (nombre de fuente del sistema o ruta .ttf/.otf; lista con `musicviz fonts`), `size`, `color`, `align: left\|center\|right`, `valign: top\|middle\|bottom`, `max_width` (parte en líneas), `line_spacing`, `letter_spacing`, `uppercase`, `stroke_width`, `stroke_color`, `shadow`, `shadow_blur`, `shadow_offset`, `box_color`, `box_padding`, `box_radius`, `pulse`, `pulse_trigger` |
 | `progress` | `thickness`, `color`, `bg_color`, `width`, `show_time`, `font` |
 
 ### Efectos (`effects`) — se aplican en orden sobre el frame completo
@@ -197,6 +202,65 @@ Todas admiten `opacity`, `blend` (`normal | add | screen`), `position: [x, y]`, 
 | `radial_blur` | `amount`, `samples` |
 | `scanlines` | `spacing`, `darkness` |
 | `grain` | `amount`, `seed` |
+
+### Diseño típico: fondo + foto del artista + títulos
+
+```yaml
+background:
+  type: image
+  image: portada.jpg
+  blur: 20
+  darken: 0.5
+layers:
+  - type: image
+    file: artista.jpg
+    shape: rounded          # original | square | circle | rounded
+    corner_radius: 40
+    size: 0.5
+    fit: cover
+    focus: [0.5, 0.3]       # conserva la parte alta de la foto al recortar
+    anchor: left
+    position: [0.08, 0.42]
+    border: 4
+    shadow: 0.7
+  - type: text
+    text: "Título de la canción"
+    font: Montserrat-Bold   # cualquier fuente instalada (ver `musicviz fonts`)
+    align: left
+    valign: top
+    position: [0.42, 0.25]
+    max_width: 0.5
+    size: 0.085
+    stroke_width: 2
+    shadow: 0.6
+  - type: text
+    text: "Artista"
+    align: left
+    valign: top
+    position: [0.42, 0.52]
+    size: 0.045
+    box_color: "#00000080"
+```
+
+### Sólo el espectro con fondo transparente
+
+Pon `output.transparent: true` (o usa el preset `spectrum_only`). No se dibuja el fondo y el video conserva el canal
+alfa para superponerlo en Premiere, DaVinci, After Effects, CapCut u OBS:
+
+| `output.codec` | Archivo | Uso |
+|---|---|---|
+| `auto` / `prores_4444` | `.mov` ProRes 4444 | Editores de video (recomendado) |
+| `qtrle` | `.mov` QuickTime Animation | Sin pérdida, archivos grandes |
+| `vp9_alpha` | `.webm` VP9 | Web, OBS, archivos pequeños |
+| `png_sequence` | carpeta con `frame_000000.png`… | Máxima compatibilidad |
+
+```powershell
+musicviz init espectro.yaml --audio cancion.mp3 --preset spectrum_only
+musicviz render espectro.yaml          # genera cancion_spectrum_only.mov con alfa
+```
+
+Los efectos funcionan también en modo transparente (el glow y el bloom quedan semitransparentes). `snapshot`
+guarda un PNG con alfa y la vista previa muestra un tablero gris detrás.
 
 Ejemplo: glitch sólo durante el drop (de 1:02 a 1:30) disparado por los kicks:
 

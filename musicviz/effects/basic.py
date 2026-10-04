@@ -62,10 +62,10 @@ class Chromatic(Effect[ChromaticEffect]):
         amt = self.ctx.px(self.cfg.amount) * k
         h, w = img.shape[:2]
         f = amt / (w / 2.0)
-        r, g, b = cv2.split(img)  # canales contiguos (mucho más rápido que img[..., i])
-        r = _zoom(r, 1.0 + f)
-        b = _zoom(b, max(1.0 - f, 0.5))
-        return cv2.merge([r, g, b])
+        channels = list(cv2.split(img))  # canales contiguos (mucho más rápido que img[..., i])
+        channels[0] = _zoom(channels[0], 1.0 + f)
+        channels[2] = _zoom(channels[2], max(1.0 - f, 0.5))
+        return cv2.merge(channels)
 
 
 class Shake(Effect[ShakeEffect]):
@@ -110,7 +110,8 @@ class ColorGrade(Effect[ColorEffect]):
         if k <= 0:
             return img
         cfg = self.cfg
-        out = img
+        alpha = img[..., 3:] if img.shape[2] == 4 else None
+        out = np.ascontiguousarray(img[..., :3]) if alpha is not None else img
         hue = cfg.hue_speed * frame.time + cfg.hue_react * frame.rms * k
         if abs(hue) > 1e-3 or cfg.saturation != 1.0:
             hsv = cv2.cvtColor(np.clip(out, 0, 1), cv2.COLOR_RGB2HSV)
@@ -128,6 +129,8 @@ class ColorGrade(Effect[ColorEffect]):
         if cfg.posterize > 1:
             levels = float(cfg.posterize)
             out = np.floor(np.clip(out, 0, 1) * levels) / (levels - 1)
+        if alpha is not None:
+            return np.concatenate([out, alpha], axis=2)
         return out
 
 
@@ -154,6 +157,11 @@ class Strobe(Effect[StrobeEffect]):
         k = min(self.drive(frame), 1.0)
         if k <= 0.01:
             return img
+        if img.shape[2] == 4:
+            out = img.copy()
+            out[..., :3] = img[..., :3] * (1.0 - k) + self.color * k
+            out[..., 3:] = np.maximum(img[..., 3:], k)
+            return out
         return img * (1.0 - k) + self.color * k
 
 
@@ -215,4 +223,7 @@ class FilmGrain(Effect[FilmGrainEffect]):
         h, w = img.shape[:2]
         noise = rng.standard_normal((h // 2, w // 2, 1), dtype=np.float32) * (self.cfg.amount * k)
         noise = cv2.resize(noise, (w, h), interpolation=cv2.INTER_LINEAR)[..., None]
+        if img.shape[2] == 4:
+            img[..., :3] += noise * img[..., 3:]  # sólo donde hay contenido (no ensucia la transparencia)
+            return img
         return img + noise

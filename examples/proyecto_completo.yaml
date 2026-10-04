@@ -101,9 +101,15 @@ layers:
   - type: text
     text: "ARTISTA - TÍTULO"
     position: [0.5, 0.93]
+    align: center           # left | center | right (también fija el anclaje horizontal)
+    valign: middle          # top | middle | bottom
+    # font: Montserrat-Bold # fuente del sistema o ruta .ttf (lista: musicviz fonts)
+    # max_width: 0.6        # parte el texto en líneas si no cabe
     size: 0.045
     color: "#ffffff"
     letter_spacing: 4
+    stroke_width: 0
+    shadow: 0.4
     pulse: 0.03
     glow: 0.4
 

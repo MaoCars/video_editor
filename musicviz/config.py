@@ -10,12 +10,14 @@ from pathlib import Path
 from typing import Annotated, List, Literal, Optional, Tuple, Union
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .utils.color import parse_color
 
 Color = str
 Trigger = Literal["always", "beat", "kick", "bass", "energy", "drop", "treble"]
+Anchor = Literal["center", "left", "right", "top", "bottom", "top_left", "top_right", "bottom_left", "bottom_right"]
+ALPHA_CODECS = ("prores_4444", "qtrle", "vp9_alpha", "png_sequence")
 
 
 class StrictModel(BaseModel):
@@ -38,7 +40,10 @@ class OutputConfig(StrictModel):
     width: int = 1920
     height: int = 1080
     fps: int = 60
-    codec: Literal["auto", "h264_nvenc", "hevc_nvenc", "libx264", "libx265"] = "auto"
+    codec: Literal["auto", "h264_nvenc", "hevc_nvenc", "libx264", "libx265", "prores_4444", "qtrle", "vp9_alpha", "png_sequence"] = "auto"
+    """auto elige h264_nvenc/libx264 (o prores_4444 si transparent=true). Los últimos cuatro conservan el canal alfa."""
+    transparent: bool = False
+    """Fondo transparente: no se dibuja el fondo y el video conserva el canal alfa (.mov ProRes 4444 por defecto)."""
     bitrate: str = "16M"
     preset: Optional[str] = None
     """Preset del encoder (NVENC: p1..p7; x264: ultrafast..veryslow). None = por defecto."""
@@ -210,27 +215,73 @@ class ParticlesLayer(LayerBase):
 
 
 class ImageLayer(LayerBase):
+    """Imagen (portada, foto del artista, logo).
+
+    La imagen se encaja en una caja cuyo lado mayor mide `size` (relativo al lado menor del lienzo);
+    `aspect` fija la proporción de la caja (None = la de la imagen), `fit` decide si se recorta (cover)
+    o se encaja completa (contain) y `focus` qué zona conservar al recortar. `anchor` indica qué punto de
+    la imagen se coloca en `position`.
+    """
+
     type: Literal["image"]
     file: str
-    scale: float = 0.3
+    size: float = 0.3
+    aspect: Optional[float] = None
+    shape: Literal["original", "square", "circle", "rounded"] = "original"
+    fit: Literal["cover", "contain"] = "cover"
+    focus: Tuple[float, float] = (0.5, 0.5)
+    anchor: Anchor = "center"
+    corner_radius: float = 40.0
+    border: float = 0.0
+    border_color: Color = "#ffffff"
+    shadow: float = 0.0
+    shadow_blur: float = 30.0
+    shadow_offset: Tuple[float, float] = (0.0, 12.0)
     pulse: float = 0.08
     pulse_trigger: Trigger = "kick"
     rotation: float = 0.0
     rotation_speed: float = 0.0
-    circle_mask: bool = False
     shake: float = 0.0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _compat(cls, data):
+        # Compatibilidad con proyectos antiguos: scale -> size, circle_mask -> shape: circle
+        if isinstance(data, dict):
+            data = dict(data)
+            if "scale" in data and "size" not in data:
+                data["size"] = data.pop("scale")
+            if data.pop("circle_mask", False):
+                data.setdefault("shape", "circle")
+        return data
 
 
 class TextLayer(LayerBase):
+    """Texto. `align` fija la alineación de las líneas y el punto horizontal que se coloca en `position`;
+    `valign` el vertical. `max_width` (relativo al ancho) parte el texto en varias líneas. Usa \\n para
+    saltos manuales."""
+
     type: Literal["text"]
     text: str
     font: Optional[str] = None
     size: float = 0.07
     color: Color = "#ffffff"
-    pulse: float = 0.04
-    pulse_trigger: Trigger = "kick"
+    align: Literal["left", "center", "right"] = "center"
+    valign: Literal["top", "middle", "bottom"] = "middle"
+    max_width: Optional[float] = None
+    line_spacing: float = 1.15
     letter_spacing: float = 0.0
     uppercase: bool = False
+    stroke_width: float = 0.0
+    stroke_color: Color = "#000000"
+    shadow: float = 0.0
+    shadow_blur: float = 12.0
+    shadow_offset: Tuple[float, float] = (3.0, 4.0)
+    box_color: Optional[Color] = None
+    box_padding: float = 16.0
+    box_radius: float = 12.0
+    pulse: float = 0.04
+    pulse_trigger: Trigger = "kick"
     glow: float = 0.4
 
 

@@ -145,8 +145,11 @@ def snapshot(
     cfg = _load_project(project)
     features = _analyze(cfg)
     img = render_frame_image(cfg, features, time_s, scale)
-    cv2.imwrite(str(output), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-    console.print(f"[green]Frame guardado:[/green] {output}")
+    if img.shape[2] == 4:
+        cv2.imwrite(str(output), cv2.cvtColor(img, cv2.COLOR_RGBA2BGRA))  # PNG con transparencia
+    else:
+        cv2.imwrite(str(output), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+    console.print(f"[green]Frame guardado:[/green] {output}" + (" (con canal alfa)" if img.shape[2] == 4 else ""))
 
 
 @app.command()
@@ -166,6 +169,21 @@ def preview(
     except RuntimeError as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(1)
+
+
+@app.command()
+def fonts(filter: Optional[str] = typer.Argument(None, help="Texto para filtrar por nombre.")):
+    """Lista las fuentes del sistema que puedes usar en las capas de texto (campo `font`)."""
+    from .layers.text import available_fonts
+
+    table = Table(title="Fuentes disponibles")
+    table.add_column("Nombre (usar en font:)", style="cyan")
+    table.add_column("Archivo")
+    for name, path in available_fonts().items():
+        if filter and filter.lower() not in name.lower():
+            continue
+        table.add_row(name, path)
+    console.print(table)
 
 
 @app.command()

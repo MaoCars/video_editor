@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from ..audio.analysis import AudioFeatures
-from ..config import ProjectConfig
+from ..config import ALPHA_CODECS, ProjectConfig
 from .engine import default_workers, iter_frames, output_size
 
 
@@ -60,7 +60,20 @@ def encoder_works(name: str) -> bool:
     return proc.returncode == 0
 
 
-def choose_codec(requested: str) -> str:
+_ENCODER_OF = {"prores_4444": "prores_ks", "qtrle": "qtrle", "vp9_alpha": "libvpx-vp9", "png_sequence": "png"}
+
+
+def choose_codec(requested: str, transparent: bool = False) -> str:
+    if transparent:
+        if requested == "auto":
+            requested = "prores_4444"
+        if requested not in ALPHA_CODECS:
+            raise ExportError(f"El códec {requested} no conserva transparencia. Usa uno de: {', '.join(ALPHA_CODECS)} (o codec: auto).")
+        if not encoder_works(_ENCODER_OF[requested]):
+            raise ExportError(f"Tu ffmpeg no tiene el encoder {_ENCODER_OF[requested]} necesario para {requested}.")
+        return requested
+    if requested in ALPHA_CODECS:
+        raise ExportError(f"El códec {requested} sólo tiene sentido con output.transparent: true.")
     if requested != "auto":
         if not encoder_works(requested):
             raise ExportError(f"El encoder {requested} no está disponible o no funciona en este equipo.")
@@ -69,6 +82,20 @@ def choose_codec(requested: str) -> str:
         if encoder_works(candidate):
             return candidate
     raise ExportError("ffmpeg no tiene ningún encoder H.264 utilizable (h264_nvenc / libx264).")
+
+
+def output_path_for(path: Path, codec: str) -> Path:
+    """Ajusta la extensión al contenedor que exige el códec (.mov para ProRes/QTRLE, .webm para VP9,
+    carpeta para la secuencia PNG)."""
+    if codec in ("prores_4444", "qtrle"):
+        return path.with_suffix(".mov")
+    if codec == "vp9_alpha":
+        return path.with_suffix(".webm")
+    if codec == "png_sequence":
+        return path.with_suffix("") if path.suffix.lower() in (".mp4", ".mov", ".webm", ".png", ".mkv") else path
+    if path.suffix.lower() not in (".mp4", ".mov", ".mkv"):
+        return path.with_suffix(".mp4")
+    return path
 
 
 def codec_args(codec: str, bitrate: str, preset: Optional[str]) -> list[str]:
@@ -81,6 +108,14 @@ def codec_args(codec: str, bitrate: str, preset: Optional[str]) -> list[str]:
         return ["-c:v", "libx264", "-preset", preset or "medium", "-crf", "18", "-maxrate", bitrate, "-bufsize", _scale_bitrate(bitrate, 2.0)]
     if codec == "libx265":
         return ["-c:v", "libx265", "-preset", preset or "medium", "-crf", "20", "-tag:v", "hvc1"]
+    if codec == "prores_4444":
+        return ["-c:v", "prores_ks", "-profile:v", "4444", "-pix_fmt", "yuva444p10le", "-vendor", "apl0", "-qscale:v", preset or "9"]
+    if codec == "qtrle":
+        return ["-c:v", "qtrle", "-pix_fmt", "argb"]
+    if codec == "vp9_alpha":
+        return ["-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-b:v", bitrate, "-deadline", "good", "-cpu-used", preset or "2", "-row-mt", "1", "-auto-alt-ref", "0"]
+    if codec == "png_sequence":
+        return ["-c:v", "png", "-pix_fmt", "rgba"]
     return ["-c:v", codec, "-b:v", bitrate]
 
 
@@ -130,11 +165,12 @@ def export_video(
     cancel: evento que, al activarse, detiene el render, cierra ffmpeg y borra el archivo parcial
             (se lanza ExportCancelled).
     """
-    out_path = Path(output or project.output.path)
+    transparent = bool(project.output.transparent)
+    codec = choose_codec(project.output.codec, transparent)
+    out_path = output_path_for(Path(output or project.output.path), codec)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     width, height = output_size(project, scale)
     fps = project.output.fps
-    codec = choose_codec(project.output.codec)
     workers = default_workers() if workers is None else max(int(workers), 1)
     if project.output.workers and workers == default_workers():
         workers = project.output.workers
@@ -148,17 +184,28 @@ def export_video(
     clip_seconds = n / fps
 
     audio_start = project.audio.start + start
+    pix_in = "rgba" if transparent else "rgb24"
     cmd = [
         ffmpeg_path(), "-hide_banner", "-loglevel", "error", "-y", "-nostdin",
-        "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{width}x{height}", "-r", str(fps), "-i", "-",
-        "-ss", f"{audio_start:.6f}", "-t", f"{clip_seconds:.6f}", "-i", str(project.audio.file),
-        "-map", "0:v:0", "-map", "1:a:0",
-        *codec_args(codec, project.output.bitrate, project.output.preset),
-        "-pix_fmt", "yuv420p", "-r", str(fps),
-        "-c:a", "aac", "-b:a", project.output.audio_bitrate,
-        "-movflags", "+faststart", "-shortest",
-        str(out_path),
+        "-f", "rawvideo", "-pix_fmt", pix_in, "-s", f"{width}x{height}", "-r", str(fps), "-i", "-",
     ]
+    if codec == "png_sequence":
+        out_path.mkdir(parents=True, exist_ok=True)
+        target = str(out_path / "frame_%06d.png")
+        cmd += ["-map", "0:v:0", *codec_args(codec, project.output.bitrate, project.output.preset), "-start_number", "0", target]
+    else:
+        audio_codec = ["-c:a", "libopus", "-b:a", "192k"] if codec == "vp9_alpha" else ["-c:a", "aac", "-b:a", project.output.audio_bitrate]
+        cmd += [
+            "-ss", f"{audio_start:.6f}", "-t", f"{clip_seconds:.6f}", "-i", str(project.audio.file),
+            "-map", "0:v:0", "-map", "1:a:0",
+            *codec_args(codec, project.output.bitrate, project.output.preset),
+        ]
+        if not transparent:
+            cmd += ["-pix_fmt", "yuv420p"]
+        cmd += ["-r", str(fps), *audio_codec, "-shortest"]
+        if out_path.suffix.lower() in (".mp4", ".mov"):
+            cmd += ["-movflags", "+faststart"]
+        cmd += [str(out_path)]
     t0 = time.perf_counter()
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     assert proc.stdin is not None
@@ -184,7 +231,10 @@ def export_video(
         proc.kill()
         proc.communicate()
         try:
-            out_path.unlink()
+            if out_path.is_dir():
+                shutil.rmtree(out_path, ignore_errors=True)
+            else:
+                out_path.unlink()
         except OSError:
             pass
         raise ExportCancelled("Render cancelado")

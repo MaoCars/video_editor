@@ -32,7 +32,11 @@ class Glitch(Effect[GlitchEffect]):
                 if dx != 0:
                     out[y0 : y0 + bh] = np.roll(img[y0 : y0 + bh], dx, axis=1)
                 if cfg.invert > 0 and rng.random() < cfg.invert:
-                    out[y0 : y0 + bh] = 1.0 - out[y0 : y0 + bh]
+                    if out.shape[2] == 4:
+                        # premultiplicado: invertir el color sólo donde hay cobertura (a·(1-c) = a - a·c)
+                        out[y0 : y0 + bh, :, :3] = out[y0 : y0 + bh, :, 3:4] - out[y0 : y0 + bh, :, :3]
+                    else:
+                        out[y0 : y0 + bh] = 1.0 - out[y0 : y0 + bh]
 
         # --- separación de canales RGB
         if cfg.rgb_split > 0:

@@ -134,16 +134,36 @@ LABELS: dict[str, str] = {
     "react": "Reacción",
     "react_trigger": "Disparador reacción",
     "name": "Nombre",
+    "transparent": "Fondo transparente",
+    "aspect": "Proporción ancho/alto",
+    "fit": "Encaje",
+    "focus": "Foco del recorte (x, y)",
+    "anchor": "Anclaje",
+    "corner_radius": "Radio esquinas",
+    "border": "Borde (px)",
+    "border_color": "Color borde",
+    "shadow": "Sombra",
+    "shadow_blur": "Desenfoque sombra",
+    "shadow_offset": "Desplaz. sombra (x, y)",
+    "align": "Alineación",
+    "valign": "Alineación vertical",
+    "max_width": "Ancho máximo (ajuste)",
+    "line_spacing": "Interlineado",
+    "stroke_width": "Contorno (px)",
+    "stroke_color": "Color contorno",
+    "box_color": "Color de caja",
+    "box_padding": "Relleno de caja",
+    "box_radius": "Radio de caja",
 }
 
-COLOR_FIELDS = {"color", "bg_color", "ring_color"}
+COLOR_FIELDS = {"color", "bg_color", "ring_color", "border_color", "stroke_color", "box_color"}
 FILE_FIELDS = {"file", "image", "path"}
 
 
 @dataclass
 class FieldSpec:
     name: str
-    kind: str  # bool | int | float | str | choice | color | colors | pair | file | model
+    kind: str  # bool | int | float | str | choice | color | colors | pair | file | font | model
     optional: bool = False
     choices: list[Any] = field(default_factory=list)
     model_cls: Optional[type] = None
@@ -181,7 +201,9 @@ def field_specs(model_cls: type[BaseModel], exclude: tuple[str, ...] = ()) -> li
         elif ann is float:
             specs.append(FieldSpec(name, "float", optional))
         elif ann is str:
-            if name in COLOR_FIELDS:
+            if name == "font":
+                specs.append(FieldSpec(name, "font", optional))
+            elif name in COLOR_FIELDS:
                 specs.append(FieldSpec(name, "color", optional))
             elif name in FILE_FIELDS:
                 specs.append(FieldSpec(name, "file", optional))

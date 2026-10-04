@@ -49,16 +49,25 @@ class RenderContext:
 class Canvas:
     """Imagen float32 RGB en [0,1] sobre la que se componen capas."""
 
-    def __init__(self, width: int, height: int):
+    def __init__(self, width: int, height: int, track_alpha: bool = False):
         self.width = width
         self.height = height
         self.img = np.zeros((height, width, 3), np.float32)
+        # Cobertura alfa (sólo en modo transparente). El RGB se guarda premultiplicado.
+        self.alpha: Optional[np.ndarray] = np.zeros((height, width, 1), np.float32) if track_alpha else None
+
+    def clear(self) -> None:
+        self.img[:] = 0.0
+        if self.alpha is not None:
+            self.alpha[:] = 0.0
 
     def new_layer(self) -> np.ndarray:
         return np.zeros((self.height, self.width, 4), np.uint8)
 
     def fill(self, rgb: np.ndarray) -> None:
         self.img[:] = rgb
+        if self.alpha is not None:
+            self.alpha[:] = 1.0
 
     @staticmethod
     def _roi_of(alpha: np.ndarray, pad: int, width: int, height: int) -> Optional[tuple[int, int, int, int]]:
@@ -115,10 +124,17 @@ class Canvas:
         else:
             raise ValueError(f"Modo de fusión desconocido: {blend}")
 
+        halo = None
         if glow > 0.0 and glow_radius > 0.0:
             halo = fast_blur(premult, glow_radius)
             halo *= np.float32(glow * 1.6)
             dst += halo
+
+        if self.alpha is not None:
+            da = self.alpha[y0:y1, x0:x1]
+            da += a * (1.0 - da)  # unión de coberturas (válido para los tres modos de fusión)
+            if halo is not None:
+                np.maximum(da, np.clip(halo.max(axis=2, keepdims=True), 0.0, 1.0), out=da)
 
     def composite_rgb(self, rgb: np.ndarray, alpha: np.ndarray, blend: str = "normal") -> None:
         """Compone una imagen float RGB con máscara alpha float (H,W,1) del tamaño del lienzo."""
@@ -138,6 +154,21 @@ def float_to_uint8(img: np.ndarray) -> np.ndarray:
     """float32 [0,1] -> uint8 con saturación (rápido vía OpenCV)."""
     img = np.clip(img, 0.0, 1.0)
     return cv2.convertScaleAbs(img, alpha=255.0)
+
+
+def premultiplied_to_rgba8(img4: np.ndarray) -> np.ndarray:
+    """(H,W,4) float con RGB premultiplicado + cobertura -> RGBA uint8 con alfa directo.
+
+    El alfa final es el máximo entre la cobertura y la luz añadida (glow/bloom), de modo que los halos
+    quedan semitransparentes en lugar de recortarse.
+    """
+    rgb = np.clip(img4[..., :3], 0.0, None)
+    alpha = np.maximum(np.clip(img4[..., 3:4], 0.0, 1.0), np.clip(rgb.max(axis=2, keepdims=True), 0.0, 1.0))
+    straight = np.where(alpha > 1e-4, rgb / np.maximum(alpha, 1e-4), 0.0)
+    out = np.empty(img4.shape[:2] + (4,), np.uint8)
+    out[..., :3] = cv2.convertScaleAbs(np.clip(straight, 0.0, 1.0), alpha=255.0)
+    out[..., 3] = cv2.convertScaleAbs(alpha[..., 0], alpha=255.0)
+    return out
 
 
 def paste_rgba(layer: np.ndarray, sprite: np.ndarray, cx: float, cy: float) -> None:
@@ -160,3 +191,45 @@ def paste_rgba(layer: np.ndarray, sprite: np.ndarray, cx: float, cy: float) -> N
     out_rgb = (src[..., :3] * sa + dst[..., :3] * da * (1.0 - sa)) / safe
     layer[dy0:dy1, dx0:dx1, :3] = np.clip(out_rgb, 0, 255).astype(np.uint8)
     layer[dy0:dy1, dx0:dx1, 3] = np.clip(out_a[..., 0] * 255.0, 0, 255).astype(np.uint8)
+
+
+def anchor_center(x: float, y: float, w: float, h: float, anchor: str) -> tuple[float, float]:
+    """Centro de un sprite w×h cuyo punto `anchor` debe quedar en (x, y)."""
+    ax = 0.5
+    ay = 0.5
+    if "left" in anchor:
+        ax = 0.0
+    elif "right" in anchor:
+        ax = 1.0
+    if "top" in anchor:
+        ay = 0.0
+    elif "bottom" in anchor:
+        ay = 1.0
+    return x + (0.5 - ax) * w, y + (0.5 - ay) * h
+
+
+def rounded_rect_mask(w: int, h: int, radius: float, shape: str = "rounded") -> np.ndarray:
+    """Máscara uint8 (h, w): rectángulo, rectángulo redondeado o elipse."""
+    mask = np.zeros((h, w), np.uint8)
+    if shape == "circle":
+        cv2.ellipse(mask, (w // 2, h // 2), (max(w // 2 - 1, 1), max(h // 2 - 1, 1)), 0, 0, 360, 255, -1, cv2.LINE_AA)
+        return mask
+    r = int(max(min(radius, w / 2, h / 2), 0))
+    if shape != "rounded" or r <= 0:
+        mask[:] = 255
+        return mask
+    cv2.rectangle(mask, (r, 0), (w - 1 - r, h - 1), 255, -1)
+    cv2.rectangle(mask, (0, r), (w - 1, h - 1 - r), 255, -1)
+    for cx, cy in ((r, r), (w - 1 - r, r), (r, h - 1 - r), (w - 1 - r, h - 1 - r)):
+        cv2.circle(mask, (cx, cy), r, 255, -1, cv2.LINE_AA)
+    return mask
+
+
+def over_checkerboard(rgba: np.ndarray, cell: int = 16) -> np.ndarray:
+    """Compone una imagen RGBA uint8 sobre un tablero gris (para previsualizar transparencias)."""
+    h, w = rgba.shape[:2]
+    ys, xs = np.mgrid[0:h, 0:w]
+    board = np.where(((ys // cell) + (xs // cell)) % 2 == 0, 200, 150).astype(np.float32)
+    a = rgba[..., 3:4].astype(np.float32) / 255.0
+    out = rgba[..., :3].astype(np.float32) * a + board[..., None] * (1.0 - a)
+    return out.astype(np.uint8)

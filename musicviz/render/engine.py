@@ -12,7 +12,7 @@ from ..audio.analysis import AudioFeatures, analyze
 from ..config import ProjectConfig
 from ..effects import build_effect
 from ..layers import Background, build_layer
-from .canvas import Canvas, RenderContext, float_to_uint8
+from .canvas import Canvas, RenderContext, float_to_uint8, premultiplied_to_rgba8
 
 
 class Scene:
@@ -30,22 +30,36 @@ class Scene:
             layer.prepare(self.ctx, features)
         for effect in self.effects:
             effect.prepare(self.ctx, features)
-        self.canvas = Canvas(width, height)
+        self.transparent = bool(project.output.transparent)
+        self.canvas = Canvas(width, height, track_alpha=self.transparent)
+
+    @property
+    def channels(self) -> int:
+        return 4 if self.transparent else 3
 
     def render_float(self, index: int) -> np.ndarray:
+        """Frame float32: (H, W, 3) RGB o, en modo transparente, (H, W, 4) RGB premultiplicado + alfa."""
         frame = self.features.frame(index)
         canvas = self.canvas
-        self.background.render(canvas, frame)
+        if self.transparent:
+            canvas.clear()
+        else:
+            self.background.render(canvas, frame)
         for layer in self.layers:
             layer.render(canvas, frame)
         img = canvas.img
+        if self.transparent:
+            img = np.concatenate([img, canvas.alpha], axis=2)
         for effect in self.effects:
             img = effect.apply(img, frame)
         return img
 
     def render(self, index: int) -> np.ndarray:
-        """Frame RGB uint8 (H, W, 3)."""
-        return float_to_uint8(self.render_float(index))
+        """Frame uint8: RGB (H, W, 3) o RGBA (H, W, 4) si el proyecto es transparente."""
+        img = self.render_float(index)
+        if self.transparent:
+            return premultiplied_to_rgba8(img)
+        return float_to_uint8(img)
 
 
 def output_size(project: ProjectConfig, scale: float = 1.0) -> tuple[int, int]:
@@ -105,7 +119,7 @@ def iter_frames(
 
 
 def render_frame_image(project: ProjectConfig, features: AudioFeatures, time: float, scale: float = 1.0) -> np.ndarray:
-    """Renderiza un único frame (RGB uint8) en el instante `time` (segundos)."""
+    """Renderiza un único frame (RGB uint8, o RGBA si el proyecto es transparente) en el instante `time`."""
     w, h = output_size(project, scale)
     scene = Scene(project, features, w, h)
     index = int(round(time * features.fps))
