@@ -36,3 +36,24 @@ def test_export_short_clip(audio_cfg, features, tmp_path):
     ).stdout.decode()
     assert "video,320,180" in probe and "audio" in probe
     assert choose_codec("auto") in ("h264_nvenc", "libx264")
+
+
+def test_export_cancel_removes_partial_file(audio_cfg, features, tmp_path):
+    import threading
+
+    from musicviz.render.exporter import ExportCancelled
+
+    if not encoder_works("libx264") and not encoder_works("h264_nvenc"):
+        pytest.skip("sin encoder H.264")
+    project = load_preset("minimal", audio_cfg.file)
+    project.output.width, project.output.height, project.output.fps = 320, 180, 30
+    out = tmp_path / "cancel.mp4"
+    cancel = threading.Event()
+
+    def on_progress(done, total):
+        if done >= 20:
+            cancel.set()
+
+    with pytest.raises(ExportCancelled):
+        export_video(project, features, output=out, duration=4.0, workers=1, progress=on_progress, cancel=cancel)
+    assert not out.exists()

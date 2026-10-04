@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from functools import lru_cache
@@ -16,6 +17,10 @@ from .engine import default_workers, iter_frames, output_size
 
 class ExportError(RuntimeError):
     pass
+
+
+class ExportCancelled(ExportError):
+    """El render fue cancelado por el usuario (se elimina el archivo parcial)."""
 
 
 def ffmpeg_path() -> str:
@@ -116,11 +121,14 @@ def export_video(
     duration: Optional[float] = None,
     workers: Optional[int] = None,
     progress: Optional[Callable[[int, int], None]] = None,
+    cancel: Optional[threading.Event] = None,
 ) -> ExportResult:
     """Renderiza todos los frames y los codifica con ffmpeg junto con el audio.
 
     start/duration: recorte del video respecto al audio analizado (segundos).
     scale: factor de resolución (0.5 = mitad, para pruebas rápidas).
+    cancel: evento que, al activarse, detiene el render, cierra ffmpeg y borra el archivo parcial
+            (se lanza ExportCancelled).
     """
     out_path = Path(output or project.output.path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -155,15 +163,31 @@ def export_video(
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     assert proc.stdin is not None
     done = 0
+    cancelled = False
+    frames = iter_frames(project, features, width, height, indices, workers=workers)
     try:
-        for data in iter_frames(project, features, width, height, indices, workers=workers):
+        for data in frames:
+            if cancel is not None and cancel.is_set():
+                cancelled = True
+                break
             proc.stdin.write(data)
             done += 1
             if progress and (done % 10 == 0 or done == n):
                 progress(done, n)
     except BrokenPipeError as exc:
+        frames.close()
         _, err = proc.communicate()
         raise ExportError(f"ffmpeg cerró la entrada: {err.decode(errors='ignore').strip()}") from exc
+    finally:
+        frames.close()  # termina el pool de procesos si quedó a medias
+    if cancelled:
+        proc.kill()
+        proc.communicate()
+        try:
+            out_path.unlink()
+        except OSError:
+            pass
+        raise ExportCancelled("Render cancelado")
     _, err = proc.communicate()  # cierra stdin y espera a que ffmpeg termine
     if proc.returncode != 0:
         raise ExportError(f"ffmpeg falló (código {proc.returncode}): {err.decode(errors='ignore').strip()}")

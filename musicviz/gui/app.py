@@ -22,6 +22,7 @@ from ..audio.analysis import AudioFeatures
 from ..config import EffectConfig, LayerConfig, ProjectConfig, get_args_of_union
 from ..presets import load_preset, preset_names
 from .fields import FieldSpec, apply_value, field_specs, format_value, replace_submodel
+from .recent import add_recent, clear_recent, load_recent, remove_recent
 
 PREVIEW_SCALES = {"Baja (480p)": 480 / 1080, "Media (540p)": 0.5, "Alta (720p)": 720 / 1080}
 AUDIO_TYPES = [("Audio", "*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.opus *.wma"), ("Todos", "*.*")]
@@ -196,6 +197,7 @@ class App(tk.Tk):
         self._playing = False
         self._play_thread: Optional[threading.Thread] = None
         self._rendering = False
+        self._cancel_event = threading.Event()
         self._photo: Optional[ImageTk.PhotoImage] = None
         self._suspend_traces = False
 
@@ -214,6 +216,9 @@ class App(tk.Tk):
         m = tk.Menu(menubar, tearoff=0)
         m.add_command(label="Nuevo desde preset…", command=self._new_from_preset, accelerator="Ctrl+N")
         m.add_command(label="Abrir proyecto…", command=self._open_dialog, accelerator="Ctrl+O")
+        self.recent_menu = tk.Menu(m, tearoff=0)
+        m.add_cascade(label="Recientes", menu=self.recent_menu)
+        self._refresh_recent_menu()
         m.add_command(label="Guardar", command=self._save, accelerator="Ctrl+S")
         m.add_command(label="Guardar como…", command=self._save_as)
         m.add_separator()
@@ -290,6 +295,8 @@ class App(tk.Tk):
         bottom.pack(fill="x")
         self.render_btn = ttk.Button(bottom, text="🎬 Renderizar video", style="Accent.TButton", command=self._start_render)
         self.render_btn.pack(side="left")
+        self.cancel_btn = ttk.Button(bottom, text="✖ Cancelar", command=self._cancel_render, state="disabled")
+        self.cancel_btn.pack(side="left", padx=(4, 0))
         ttk.Label(bottom, text="Desde (s):").pack(side="left", padx=(16, 2))
         self.r_start = tk.StringVar(value="0")
         ttk.Entry(bottom, textvariable=self.r_start, width=7).pack(side="left")
@@ -485,6 +492,37 @@ class App(tk.Tk):
             self._refresh_list(kind, select=j)
             self._changed()
 
+    # ------------------------------------------------------------------ recientes
+    def _refresh_recent_menu(self):
+        menu = self.recent_menu
+        menu.delete(0, "end")
+        items = load_recent()
+        if not items:
+            menu.add_command(label="(vacío)", state="disabled")
+        for p in items:
+            label = p.name if len(str(p)) < 60 else p.name
+            menu.add_command(label=f"{label}   —   {p.parent}", command=lambda q=p: self._open_recent(q))
+        menu.add_separator()
+        menu.add_command(label="Limpiar lista", command=self._clear_recent, state="normal" if items else "disabled")
+
+    def _open_recent(self, path: Path):
+        if not path.exists():
+            if messagebox.askyesno("No encontrado", f"El proyecto ya no existe:\n{path}\n\n¿Quitarlo de la lista?", parent=self):
+                remove_recent(path)
+                self._refresh_recent_menu()
+            return
+        if not self._confirm_discard():
+            return
+        self._open_project(path)
+
+    def _clear_recent(self):
+        clear_recent()
+        self._refresh_recent_menu()
+
+    def _remember(self, path: Path):
+        add_recent(path)
+        self._refresh_recent_menu()
+
     # ------------------------------------------------------------------ archivo
     def _confirm_discard(self) -> bool:
         if not self.dirty:
@@ -531,6 +569,7 @@ class App(tk.Tk):
             return
         self.project_path = path
         self.dirty = False
+        self._remember(path)
         self._refresh_all()
 
     def _save(self) -> bool:
@@ -543,6 +582,7 @@ class App(tk.Tk):
             return False
         self.dirty = False
         self._update_title()
+        self._remember(self.project_path)
         self._set_status(f"Guardado en {self.project_path}")
         return True
 
@@ -728,19 +768,32 @@ class App(tk.Tk):
         if self._playing:
             self._stop_play()
         self._rendering = True
+        self._cancel_event.clear()
         self.render_btn.configure(state="disabled", text="Renderizando…")
+        self.cancel_btn.configure(state="normal")
         self.progress.configure(value=0, maximum=100)
         project = self.project.model_copy(deep=True)
         threading.Thread(target=self._render_worker, args=(project, start, duration, scale), daemon=True).start()
 
+    def _cancel_render(self):
+        if self._rendering and messagebox.askyesno("Cancelar render", "¿Cancelar el render en curso? Se borrará el archivo parcial.", parent=self):
+            self._cancel_event.set()
+            self.cancel_btn.configure(state="disabled")
+            self._set_status("Cancelando…")
+
     def _render_worker(self, project: ProjectConfig, start: float, duration: Optional[float], scale: float):
         try:
-            from ..render.exporter import export_video
+            from ..render.exporter import ExportCancelled, export_video
 
             feats = self._get_features_for(project)
             self._queue.put(("status", "Renderizando… (puedes seguir editando, pero no cierres la ventana)"))
-            result = export_video(project, feats, scale=scale, start=start, duration=duration, progress=lambda d, t: self._queue.put(("progress", (d, t))))
+            result = export_video(
+                project, feats, scale=scale, start=start, duration=duration,
+                progress=lambda d, t: self._queue.put(("progress", (d, t))), cancel=self._cancel_event,
+            )
             self._queue.put(("render_done", result))
+        except ExportCancelled:
+            self._queue.put(("render_cancelled", None))
         except Exception as exc:  # noqa: BLE001
             self._queue.put(("render_error", str(exc)))
             traceback.print_exc()
@@ -775,17 +828,19 @@ class App(tk.Tk):
                     done, total = payload
                     self.progress.configure(maximum=total, value=done)
                     self._set_status(f"Renderizando… {done}/{total} frames ({100 * done / max(total, 1):.0f}%)")
+                elif kind == "render_cancelled":
+                    self._render_finished()
+                    self.progress.configure(value=0)
+                    self._set_status("Render cancelado (archivo parcial eliminado)")
                 elif kind == "render_done":
-                    self._rendering = False
-                    self.render_btn.configure(state="normal", text="🎬 Renderizar video")
+                    self._render_finished()
                     self.progress.configure(value=self.progress["maximum"])
                     msg = f"Video listo:\n{payload.path}\n\n{payload.width}x{payload.height} · {payload.codec} · {payload.frames} frames en {payload.seconds:.0f}s"
                     self._set_status(f"Video listo: {payload.path}")
                     if messagebox.askyesno("Render terminado", msg + "\n\n¿Abrir la carpeta?", parent=self):
                         _open_folder(Path(payload.path).parent)
                 elif kind == "render_error":
-                    self._rendering = False
-                    self.render_btn.configure(state="normal", text="🎬 Renderizar video")
+                    self._render_finished()
                     self._set_status("Error en el render")
                     messagebox.showerror("Error en el render", payload, parent=self)
                 elif kind == "error":
@@ -793,6 +848,11 @@ class App(tk.Tk):
         except queue.Empty:
             pass
         self.after(50, self._poll_queue)
+
+    def _render_finished(self):
+        self._rendering = False
+        self.render_btn.configure(state="normal", text="🎬 Renderizar video")
+        self.cancel_btn.configure(state="disabled")
 
     def _check_env(self):
         from ..render.exporter import ExportError, available_encoders, encoder_works, ffmpeg_path
@@ -817,8 +877,10 @@ class App(tk.Tk):
         messagebox.showinfo("Entorno", "\n".join(lines), parent=self)
 
     def _on_close(self):
-        if self._rendering and not messagebox.askyesno("Render en curso", "Hay un render en curso. ¿Salir de todos modos?", parent=self):
-            return
+        if self._rendering:
+            if not messagebox.askyesno("Render en curso", "Hay un render en curso. ¿Cancelarlo y salir?", parent=self):
+                return
+            self._cancel_event.set()
         if not self._confirm_discard():
             return
         self._stop_play()

@@ -36,6 +36,18 @@ el render usa varios núcleos de CPU en paralelo y la codificación del video se
 
 > En Linux/macOS funciona igual (instala ffmpeg con tu gestor de paquetes).
 
+### Verificar la instalación (cualquier versión de Python 3.10 a 3.14)
+
+```powershell
+pip install -e .[dev]
+pytest
+```
+
+La suite comprueba el análisis de audio, todas las capas y efectos, la exportación real con ffmpeg
+(incluida la cancelación) y una prueba de humo de la interfaz gráfica (abre la ventana, genera la vista
+previa, renderiza un clip y lo cancela). El repositorio incluye integración continua en GitHub Actions
+que ejecuta la misma suite en **Windows y Linux con Python 3.10, 3.12, 3.13 y 3.14**.
+
 ---
 
 ## 2. Interfaz gráfica
@@ -54,8 +66,9 @@ musicviz gui mi_video.yaml   # abrir un proyecto existente
 - **Vista previa**: se actualiza sola al cambiar cualquier valor (casilla *Auto*), con control de tiempo,
   calidad y botón *Reproducir* (con audio si instalaste `sounddevice`).
 - **Renderizar video**: render completo o un fragmento (*Desde* / *Duración* / *Escala*) con barra de progreso;
-  la ventana sigue usable mientras tanto.
+  la ventana sigue usable mientras tanto y el botón *Cancelar* detiene el render y borra el archivo parcial.
 - *Archivo → Guardar* escribe el YAML, que también puedes editar a mano o usar con la línea de comandos.
+  *Archivo → Recientes* recuerda los últimos 10 proyectos abiertos o guardados.
 
 ## 3. Uso rápido (línea de comandos)
 
