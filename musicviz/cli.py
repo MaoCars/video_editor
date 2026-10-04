@@ -169,6 +169,17 @@ def preview(
 
 
 @app.command()
+def gui(project: Optional[Path] = typer.Argument(None, help="Proyecto YAML a abrir (opcional).")):
+    """Abre la interfaz gráfica."""
+    try:
+        from .gui.app import main as gui_main
+    except ImportError as exc:
+        console.print(f"[red]No se pudo cargar la interfaz gráfica (¿falta tkinter?): {exc}[/red]")
+        raise typer.Exit(1)
+    gui_main([str(project)] if project else [])
+
+
+@app.command()
 def check():
     """Comprueba ffmpeg, encoders (NVENC) y CPUs disponibles."""
     import os

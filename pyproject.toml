@@ -27,6 +27,7 @@ dev = ["pytest>=7.0"]
 
 [project.scripts]
 musicviz = "musicviz.cli:main"
+musicviz-gui = "musicviz.gui.app:main"
 
 [tool.setuptools.packages.find]
 include = ["musicviz*"]

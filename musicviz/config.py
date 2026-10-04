@@ -421,3 +421,11 @@ class ProjectConfig(StrictModel):
 
     def save(self, path: str | Path) -> None:
         Path(path).write_text(self.to_yaml(), encoding="utf-8")
+
+
+def get_args_of_union(annotated_union) -> tuple[type, ...]:
+    """Clases concretas de una unión discriminada (LayerConfig / EffectConfig)."""
+    from typing import get_args
+
+    inner = get_args(annotated_union)[0]  # Annotated[Union[...], Field] -> Union[...]
+    return tuple(get_args(inner))

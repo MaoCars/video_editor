@@ -38,7 +38,26 @@ el render usa varios núcleos de CPU en paralelo y la codificación del video se
 
 ---
 
-## 2. Uso rápido
+## 2. Interfaz gráfica
+
+```powershell
+musicviz gui                 # o: musicviz-gui, o: python -m musicviz.gui
+musicviz gui mi_video.yaml   # abrir un proyecto existente
+```
+
+![Interfaz gráfica](docs/gui.png)
+
+- **Arriba**: archivo de audio, video de salida y preset base (*Aplicar preset* reemplaza capas y efectos).
+- **Proyecto**: resolución, FPS, códec, análisis de audio (bandas, suavizado, sensibilidad de beats) y fondo.
+- **Capas / Efectos**: lista ordenable (añadir, duplicar, eliminar, subir/bajar) y un formulario con todas las
+  opciones del elemento seleccionado; los campos inválidos se marcan en rojo y el motivo aparece en la barra de estado.
+- **Vista previa**: se actualiza sola al cambiar cualquier valor (casilla *Auto*), con control de tiempo,
+  calidad y botón *Reproducir* (con audio si instalaste `sounddevice`).
+- **Renderizar video**: render completo o un fragmento (*Desde* / *Duración* / *Escala*) con barra de progreso;
+  la ventana sigue usable mientras tanto.
+- *Archivo → Guardar* escribe el YAML, que también puedes editar a mano o usar con la línea de comandos.
+
+## 3. Uso rápido (línea de comandos)
 
 ```powershell
 # 1) Crear un proyecto a partir de un preset
@@ -64,11 +83,12 @@ Otros comandos:
 | `musicviz presets` | Lista los presets y su descripción |
 | `musicviz analyze cancion.mp3` | Duración, BPM estimado, beats, kicks y "drop" más fuerte |
 | `musicviz check` | Comprueba ffmpeg, NVENC, OpenCV, CPUs |
+| `musicviz gui [proyecto.yaml]` | Abre la interfaz gráfica |
 | `musicviz render ... --workers 6` | Número de procesos de render en paralelo |
 
 ---
 
-## 3. Presets incluidos
+## 4. Presets incluidos
 
 | Preset | Estilo |
 |---|---|
@@ -84,7 +104,7 @@ con todas las opciones.
 
 ---
 
-## 4. Estructura del proyecto (YAML)
+## 5. Estructura del proyecto (YAML)
 
 ```yaml
 name: mi_video
@@ -179,7 +199,7 @@ effects:
 
 ---
 
-## 5. Rendimiento y memoria (8 GB de RAM)
+## 6. Rendimiento y memoria (8 GB de RAM)
 
 - El render es CPU (OpenCV + NumPy) en varios procesos; la codificación es GPU (NVENC).
   A 1080p60 cada proceso tarda ~80‑200 ms por frame según la cantidad de capas/efectos; con
@@ -192,7 +212,7 @@ effects:
 
 ---
 
-## 6. Cómo funciona (para personalizar el código)
+## 7. Cómo funciona (para personalizar el código)
 
 ```
 musicviz/
@@ -203,7 +223,8 @@ musicviz/
   render/canvas.py    # lienzo float RGB + composición de capas RGBA con glow y blend modes
   render/engine.py    # Scene, render por frame, pool de procesos
   render/exporter.py  # ffmpeg (NVENC / libx264) + mezcla de audio
-  render/preview.py   # ventana de vista previa
+  render/preview.py   # ventana de vista previa (OpenCV)
+  gui/app.py          # interfaz gráfica Tkinter; gui/fields.py genera los formularios desde los modelos
   presets/*.yaml
 ```
 
