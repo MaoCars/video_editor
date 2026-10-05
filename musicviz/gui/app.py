@@ -189,58 +189,80 @@ class ModelForm(ttk.Frame):
         self._build(exclude)
 
     def _build(self, exclude):
-        row = 0
-        for spec in field_specs(type(self.model), exclude):
+        from ..config import EffectBase, LayerBase
+
+        specs = field_specs(type(self.model), exclude)
+        base_cls = LayerBase if isinstance(self.model, LayerBase) else EffectBase if isinstance(self.model, EffectBase) else None
+        if base_cls is not None and type(self.model) is not base_cls:
+            # Primero los campos propios del tipo (colores, radio, estilo...), luego los comunes plegados en un bloque
+            common_names = set(base_cls.model_fields) - {"enabled", "opacity", "blend", "trigger", "threshold", "intensity"}
+            own = [sp for sp in specs if sp.name not in common_names]
+            common = [sp for sp in specs if sp.name in common_names]
+            row = self._build_rows(own, 0)
+            box = ttk.LabelFrame(self, text="Comunes: posición, tiempo, animación, secciones", padding=4)
+            box.grid(row=row, column=0, columnspan=3, sticky="ew", padx=4, pady=(8, 4))
+            box.columnconfigure(1, weight=1)
+            sub = ttk.Frame(box)
+            sub.pack(fill="x")
+            sub.columnconfigure(1, weight=1)
+            self._build_rows(common, 0, parent=sub)
+            return
+        self._build_rows(specs, 0)
+
+    def _build_rows(self, specs, row: int, parent=None) -> int:
+        parent = parent or self
+        for spec in specs:
             value = getattr(self.model, spec.name)
             if spec.kind == "model":
-                box = ttk.LabelFrame(self, text=spec.label)
+                box = ttk.LabelFrame(parent, text=spec.label)
                 box.grid(row=row, column=0, columnspan=3, sticky="ew", padx=4, pady=4)
                 box.columnconfigure(0, weight=1)
                 sub = ModelForm(box, value, lambda m, n=spec.name: self._set_sub(n, m), status=self.status)
                 sub.pack(fill="x")
                 row += 1
                 continue
-            ttk.Label(self, text=spec.label).grid(row=row, column=0, sticky="w", padx=(6, 8), pady=2)
+            ttk.Label(parent, text=spec.label).grid(row=row, column=0, sticky="w", padx=(6, 8), pady=2)
             if spec.kind == "bool":
                 var = tk.BooleanVar(value=bool(value))
-                w = ttk.Checkbutton(self, variable=var, command=lambda s=spec, v=var: self._commit(s, v.get()))
+                w = ttk.Checkbutton(parent, variable=var, command=lambda s=spec, v=var: self._commit(s, v.get()))
                 w.grid(row=row, column=1, sticky="w")
             elif spec.kind == "choice":
                 var = tk.StringVar(value=str(value) if value is not None else "")
                 values = [str(c) for c in spec.choices] + ([""] if spec.optional else [])
-                w = ttk.Combobox(self, textvariable=var, values=values, state="readonly", width=16)
+                w = ttk.Combobox(parent, textvariable=var, values=values, state="readonly", width=16)
                 w.grid(row=row, column=1, sticky="w")
                 w.bind("<<ComboboxSelected>>", lambda e, s=spec, v=var: self._commit(s, v.get()))
             elif spec.kind == "str" and spec.readonly:
-                ttk.Label(self, text=str(value), font=("TkDefaultFont", 9, "bold")).grid(row=row, column=1, sticky="w")
+                ttk.Label(parent, text=str(value), font=("TkDefaultFont", 9, "bold")).grid(row=row, column=1, sticky="w")
             elif spec.kind == "font":
                 var = tk.StringVar(value=str(value) if value else "")
-                w = ttk.Combobox(self, textvariable=var, values=[""] + list(available_fonts()), width=26)
+                w = ttk.Combobox(parent, textvariable=var, values=[""] + list(available_fonts()), width=26)
                 w.grid(row=row, column=1, sticky="ew")
                 w.bind("<<ComboboxSelected>>", lambda e, s=spec, v=var: self._commit(s, v.get()))
                 w.bind("<Return>", lambda e, s=spec, v=var: self._commit(s, v.get()))
                 w.bind("<FocusOut>", lambda e, s=spec, v=var: self._commit(s, v.get()))
-                ttk.Button(self, text="…", width=3, command=lambda s=spec, v=var: self._pick_font_file(s, v)).grid(row=row, column=2, padx=2)
+                ttk.Button(parent, text="…", width=3, command=lambda s=spec, v=var: self._pick_font_file(s, v)).grid(row=row, column=2, padx=2)
             elif spec.kind == "colors":
-                widget = ColorList(self, list(value or []), lambda cols, s=spec: self._commit_colors(s, cols))
+                widget = ColorList(parent, list(value or []), lambda cols, s=spec: self._commit_colors(s, cols))
                 widget.grid(row=row, column=1, columnspan=2, sticky="ew", pady=(2, 4))
                 self._color_lists[spec.name] = widget
             else:
                 var = tk.StringVar(value=format_value(value, spec))
-                entry = ttk.Entry(self, textvariable=var, width=28)
+                entry = ttk.Entry(parent, textvariable=var, width=28)
                 entry.grid(row=row, column=1, sticky="ew")
                 entry.bind("<Return>", lambda e, s=spec, v=var, w=entry: self._commit(s, v.get(), w))
                 entry.bind("<FocusOut>", lambda e, s=spec, v=var, w=entry: self._commit(s, v.get(), w))
                 if spec.kind == "color":
-                    side = ttk.Frame(self)
+                    side = ttk.Frame(parent)
                     side.grid(row=row, column=2, padx=2)
                     swatch = tk.Label(side, width=2, bg=_swatch_color(str(value)) or "#888888", relief="solid", bd=1)
                     swatch.pack(side="left", padx=(0, 2))
                     var.trace_add("write", lambda *a, v=var, sw=swatch: sw.configure(bg=_swatch_color(v.get()) or "#888888"))
                     ttk.Button(side, text="…", width=3, command=lambda s=spec, v=var, w=entry: self._pick_color(s, v, w, replace=True)).pack(side="left")
                 elif spec.kind == "file":
-                    ttk.Button(self, text="…", width=3, command=lambda s=spec, v=var, w=entry: self._pick_file(s, v, w)).grid(row=row, column=2, padx=2)
+                    ttk.Button(parent, text="…", width=3, command=lambda s=spec, v=var, w=entry: self._pick_file(s, v, w)).grid(row=row, column=2, padx=2)
             row += 1
+        return row
 
     def _set_sub(self, name: str, sub: BaseModel):
         try:
