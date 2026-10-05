@@ -19,7 +19,7 @@ from PIL import Image, ImageTk
 from pydantic import BaseModel
 
 from ..audio.analysis import AudioFeatures
-from ..config import EffectConfig, LayerConfig, ProjectConfig, get_args_of_union
+from ..config import EffectConfig, LayerConfig, ProjectConfig, SectionConfig, get_args_of_union
 from ..layers.text import available_fonts
 from ..presets import load_preset, preset_names
 from ..render.canvas import over_checkerboard
@@ -282,11 +282,14 @@ class App(tk.Tk):
         self.tab_project = ScrollFrame(self.nb)
         self.tab_layers = ttk.Frame(self.nb)
         self.tab_effects = ttk.Frame(self.nb)
+        self.tab_sections = ttk.Frame(self.nb)
         self.nb.add(self.tab_project, text="Proyecto")
         self.nb.add(self.tab_layers, text="Capas")
         self.nb.add(self.tab_effects, text="Efectos")
+        self.nb.add(self.tab_sections, text="Secciones")
         self._build_list_tab(self.tab_layers, "layers")
         self._build_list_tab(self.tab_effects, "effects")
+        self._build_list_tab(self.tab_sections, "sections")
 
         right = ttk.Frame(paned)
         paned.add(right, weight=1)
@@ -297,7 +300,7 @@ class App(tk.Tk):
         self.time_var = tk.DoubleVar(value=0.0)
         self.time_scale = ttk.Scale(ctl, from_=0.0, to=1.0, variable=self.time_var, command=lambda v: self._on_time_drag())
         self.time_scale.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        self.time_label = ttk.Label(ctl, text="0:00 / 0:00", width=12)
+        self.time_label = ttk.Label(ctl, text="0:00 / 0:00", width=20)
         self.time_label.pack(side="left")
         self.play_btn = ttk.Button(ctl, text="▶ Reproducir", command=self._toggle_play, width=14)
         self.play_btn.pack(side="left", padx=4)
@@ -335,14 +338,19 @@ class App(tk.Tk):
         tab.columnconfigure(0, weight=1)
         bar = ttk.Frame(tab, padding=4)
         bar.grid(row=0, column=0, sticky="ew")
-        add_btn = ttk.Menubutton(bar, text="＋ Añadir")
-        menu = tk.Menu(add_btn, tearoff=0)
-        union = LayerConfig if kind == "layers" else EffectConfig
-        for cls in get_args_of_union(union):
-            tname = cls.model_fields["type"].default if cls.model_fields["type"].default is not None else get_literal_default(cls)
-            menu.add_command(label=tname, command=lambda c=cls, k=kind: self._add_item(k, c))
-        add_btn["menu"] = menu
-        add_btn.pack(side="left")
+        if kind == "sections":
+            ttk.Button(bar, text="＋ Añadir sección", command=lambda: self._add_item("sections", SectionConfig)).pack(side="left")
+            ttk.Button(bar, text="Detectar automáticamente", command=self._detect_sections).pack(side="left", padx=2)
+            ttk.Button(bar, text="Modo auto", command=self._set_sections_auto).pack(side="left", padx=2)
+        else:
+            add_btn = ttk.Menubutton(bar, text="＋ Añadir")
+            menu = tk.Menu(add_btn, tearoff=0)
+            union = LayerConfig if kind == "layers" else EffectConfig
+            for cls in get_args_of_union(union):
+                tname = get_literal_default(cls)
+                menu.add_command(label=tname, command=lambda c=cls, k=kind: self._add_item(k, c))
+            add_btn["menu"] = menu
+            add_btn.pack(side="left")
         ttk.Button(bar, text="Duplicar", command=lambda k=kind: self._dup_item(k)).pack(side="left", padx=2)
         ttk.Button(bar, text="Eliminar", command=lambda k=kind: self._del_item(k)).pack(side="left", padx=2)
         ttk.Button(bar, text="▲", width=3, command=lambda k=kind: self._move_item(k, -1)).pack(side="left", padx=2)
@@ -356,6 +364,50 @@ class App(tk.Tk):
         body.add(form, weight=1)
         setattr(self, f"{kind}_list", lb)
         setattr(self, f"{kind}_form", form)
+        if kind == "sections":
+            ttk.Label(tab, text="Las capas con colores = palette siguen la paleta de la sección. Pon start/end en segundos; end vacío = hasta la siguiente.", wraplength=480, foreground="#555", padding=(6, 2)).grid(row=2, column=0, sticky="ew")
+
+    # ------------------------------------------------------------------ listas (capas / efectos / secciones)
+    def _items(self, kind: str) -> list:
+        items = getattr(self.project, kind)
+        if isinstance(items, str):  # sections: "auto"
+            return []
+        return items
+
+    def _item_label(self, kind: str, i: int, item) -> str:
+        if kind == "sections":
+            end = f"{item.end:.1f}s" if item.end is not None else "…"
+            return f"{i + 1}. {item.name or 'sección'}   {item.start:.1f}s → {end}   ×{item.intensity:g}"
+        extra = ""
+        if kind == "effects":
+            extra = f"  ({item.trigger})"
+        elif hasattr(item, "text"):
+            extra = f"  “{item.text[:18]}”"
+        if getattr(item, "sections", None):
+            extra += f"  [{', '.join(item.sections)}]"
+        flag = "" if item.enabled else "  [off]"
+        return f"{i + 1}. {item.type}{extra}{flag}"
+
+    def _detect_sections(self):
+        if self._features is None:
+            self._set_status("Espera a que termine el análisis del audio (o elige un archivo de audio)")
+            return
+        from ..render.sections import detect_sections
+
+        found = detect_sections(self._features, self.project.auto_sections)
+        if self.project.sections and self.project.sections != "auto":
+            if not messagebox.askyesno("Detectar secciones", "Se reemplazarán las secciones actuales por las detectadas. ¿Continuar?", parent=self):
+                return
+        self.project.sections = found
+        self._refresh_list("sections", select=0)
+        self._changed()
+        self._set_status(f"{len(found)} secciones detectadas; edita paletas e intensidades a tu gusto")
+
+    def _set_sections_auto(self):
+        self.project.sections = "auto"
+        self._refresh_list("sections")
+        self._changed()
+        self._set_status("Secciones en modo automático: se detectan al renderizar (ajustes en auto_sections del YAML)")
 
     # ------------------------------------------------------------------ estado / refresco
     def _set_status(self, text: str):
@@ -379,6 +431,7 @@ class App(tk.Tk):
         self._build_project_tab()
         self._refresh_list("layers")
         self._refresh_list("effects")
+        self._refresh_list("sections")
         self._update_title()
         self._request_preview()
 
@@ -423,17 +476,13 @@ class App(tk.Tk):
 
     def _refresh_list(self, kind: str, select: Optional[int] = None):
         lb: tk.Listbox = getattr(self, f"{kind}_list")
-        items = getattr(self.project, kind)
+        items = self._items(kind)
         cur = select if select is not None else (lb.curselection()[0] if lb.curselection() else 0)
         lb.delete(0, "end")
+        if kind == "sections" and self.project.sections == "auto":
+            lb.insert("end", "(automático: se detectan al renderizar; pulsa “Detectar” para editarlas)")
         for i, item in enumerate(items):
-            extra = ""
-            if kind == "effects":
-                extra = f"  ({item.trigger})"
-            elif hasattr(item, "text"):
-                extra = f"  “{item.text[:18]}”"
-            flag = "" if item.enabled else "  [off]"
-            lb.insert("end", f"{i + 1}. {item.type}{extra}{flag}")
+            lb.insert("end", self._item_label(kind, i, item))
         if items:
             cur = min(cur, len(items) - 1)
             lb.selection_set(cur)
@@ -444,21 +493,19 @@ class App(tk.Tk):
         lb: tk.Listbox = getattr(self, f"{kind}_list")
         form: ScrollFrame = getattr(self, f"{kind}_form")
         form.clear()
-        items = getattr(self.project, kind)
+        items = self._items(kind)
         if not lb.curselection() or not items:
-            ttk.Label(form.inner, text="Añade una capa o efecto con el botón ＋", padding=10).pack()
+            ttk.Label(form.inner, text="Añade un elemento con el botón ＋", padding=10).pack()
             return
         idx = lb.curselection()[0]
         ModelForm(form.inner, items[idx], lambda m, k=kind, i=idx: self._set_item(k, i, m), status=self._set_status).pack(fill="x", padx=4, pady=4)
 
     def _set_item(self, kind: str, idx: int, model):
-        items = getattr(self.project, kind)
+        items = self._items(kind)
         items[idx] = model
         lb: tk.Listbox = getattr(self, f"{kind}_list")
-        extra = f"  ({model.trigger})" if kind == "effects" else (f"  “{model.text[:18]}”" if hasattr(model, "text") else "")
-        flag = "" if model.enabled else "  [off]"
         lb.delete(idx)
-        lb.insert(idx, f"{idx + 1}. {model.type}{extra}{flag}")
+        lb.insert(idx, self._item_label(kind, idx, model))
         lb.selection_set(idx)
         self._changed()
 
@@ -467,6 +514,13 @@ class App(tk.Tk):
         return lb.curselection()[0] if lb.curselection() else None
 
     def _add_item(self, kind: str, cls):
+        if kind == "sections":
+            if isinstance(self.project.sections, str):
+                self.project.sections = []
+            self.project.sections.append(SectionConfig(name=f"seccion_{len(self.project.sections) + 1}", start=round(float(self.time_var.get()), 1)))
+            self._refresh_list("sections", select=len(self.project.sections) - 1)
+            self._changed()
+            return
         tname = get_literal_default(cls)
         data = {"type": tname}
         if tname == "image":
@@ -477,7 +531,7 @@ class App(tk.Tk):
         if tname == "text":
             data["text"] = "Texto"
         item = cls.model_validate(data)
-        items = getattr(self.project, kind)
+        items = self._items(kind)
         items.append(item)
         self._refresh_list(kind, select=len(items) - 1)
         self._changed()
@@ -486,7 +540,9 @@ class App(tk.Tk):
         idx = self._selected(kind)
         if idx is None:
             return
-        items = getattr(self.project, kind)
+        items = self._items(kind)
+        if not items:
+            return
         items.insert(idx + 1, items[idx].model_copy(deep=True))
         self._refresh_list(kind, select=idx + 1)
         self._changed()
@@ -495,7 +551,9 @@ class App(tk.Tk):
         idx = self._selected(kind)
         if idx is None:
             return
-        items = getattr(self.project, kind)
+        items = self._items(kind)
+        if not items:
+            return
         del items[idx]
         self._refresh_list(kind, select=max(idx - 1, 0))
         self._changed()
@@ -504,7 +562,9 @@ class App(tk.Tk):
         idx = self._selected(kind)
         if idx is None:
             return
-        items = getattr(self.project, kind)
+        items = self._items(kind)
+        if not items:
+            return
         j = idx + delta
         if 0 <= j < len(items):
             items[idx], items[j] = items[j], items[idx]
@@ -701,7 +761,17 @@ class App(tk.Tk):
 
     def _update_time_label(self):
         total = self._features.duration if self._features else 0.0
-        self.time_label.configure(text=f"{_fmt(self.time_var.get())} / {_fmt(total)}")
+        label = f"{_fmt(self.time_var.get())} / {_fmt(total)}"
+        if self._features is not None and self.project.sections:
+            try:
+                from ..render.sections import SectionTimeline, resolve_sections
+
+                name = SectionTimeline(resolve_sections(self.project, self._features)).state_at(float(self.time_var.get())).name
+                if name:
+                    label += f"  ·  {name}"
+            except Exception:  # noqa: BLE001 - sección inválida a medio editar
+                pass
+        self.time_label.configure(text=label)
 
     # ------------------------------------------------------------------ reproducción
     def _toggle_play(self):

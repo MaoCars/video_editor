@@ -108,6 +108,7 @@ Otros comandos:
 | `musicviz analyze cancion.mp3` | Duración, BPM estimado, beats, kicks y "drop" más fuerte |
 | `musicviz check` | Comprueba ffmpeg, NVENC, OpenCV, CPUs |
 | `musicviz fonts [filtro]` | Lista las fuentes del sistema utilizables en `font:` |
+| `musicviz sections cancion.mp3` | Detecta las secciones (calm / build / drop) y las imprime en YAML |
 | `musicviz gui [proyecto.yaml]` | Abre la interfaz gráfica |
 | `musicviz render ... --workers 6` | Número de procesos de render en paralelo |
 
@@ -123,6 +124,7 @@ Otros comandos:
 | `dnb_glitch` | Barras simétricas con espejo, glitch/pixelado en los kicks, strobe y desenfoque radial en los drops |
 | `minimal` | Plantilla mínima para empezar desde cero |
 | `spectrum_only` | Sólo el espectro circular con fondo transparente (.mov con alfa) para superponer en otro editor |
+| `auto_sections` | Secciones automáticas (calma / subida / drop) con paletas distintas, fondo que vibra con los kicks y glitch sólo en los drops |
 
 `musicviz init` copia el preset (con comentarios) a tu YAML: edita, guarda y vuelve a
 hacer `snapshot`/`render`. Mira `examples/proyecto_completo.yaml` para un ejemplo comentado
@@ -178,7 +180,8 @@ Cada efecto admite `intensity`, `threshold`, `start` y `end` (ventana en segundo
 ### Fondo (`background`)
 
 `type: solid | gradient | radial | image | video`, `colors`, `angle`, `image`, `image_fit`,
-`blur`, `darken`, `pulse` (zoom con el kick), `react` (brillo con la energía), `react_trigger`.
+`blur`, `darken`, `pulse` + `pulse_trigger` (zoom al ritmo), `zoom` (aumento fijo), `shake` + `shake_trigger` +
+`shake_rotation` (vibración), `react` + `react_trigger` (brillo con la energía).
 
 Con `type: video`: `video` (mp4, mov, webm...), `video_start` (segundo inicial), `video_loop` (repetir si es más
 corto que la canción; si no, se congela el último frame), `video_speed`. El audio del video se ignora. `blur`,
@@ -255,6 +258,65 @@ por ejemplo `anchor: left` con `position: [0.05, 0.5]` pega la imagen al borde i
 | `radial_blur` | `amount`, `samples` |
 | `scanlines` | `spacing`, `darkness` |
 | `grain` | `amount`, `seed` |
+
+### Secciones: que el diseño cambie con la canción
+
+Un visualizer plano se ve igual en la intro y en el drop. Con `sections` cada tramo tiene su paleta, sus
+colores de fondo, su intensidad (escala glow, pulsos, partículas y efectos) y sus efectos o capas:
+
+```yaml
+sections:
+  - name: intro
+    start: 0
+    palette: ["#4cc9f0", "#4361ee"]
+    background_colors: ["#07122b", "#020308"]
+    intensity: 0.7
+  - name: drop
+    start: 31          # end vacío = hasta la siguiente sección
+    end: 62
+    palette: ["#ff2a6d", "#ff7a00", "#ffd166"]
+    background_colors: ["#2b0410", "#050102"]
+    intensity: 1.3
+    effects: [glitch, shake, bloom]   # sólo estos efectos (por nombre o tipo)
+    transition: 0.5                   # segundos de mezcla con la sección anterior
+layers:
+  - type: circle
+    colors: [palette]                 # sigue la paleta de la sección activa
+effects:
+  - type: glitch
+    trigger: kick
+    sections: [drop]                  # alternativa: el efecto declara en qué secciones existe
+```
+
+- `colors: [palette]` en barras, círculo, partículas o forma de onda toma la paleta de la sección; el cambio
+  se interpola durante `transition`.
+- `sections: [nombres]` en una capa o efecto lo limita a esas secciones. `name` permite nombrar capas y
+  efectos para referirse a ellos.
+- **Detección automática**: `sections: auto` clasifica la canción en `calm`, `build` y `drop` a partir de la
+  energía; las paletas e intensidades de cada tipo se ajustan en `auto_sections`. `musicviz sections cancion.mp3`
+  imprime los tramos detectados en YAML para pegarlos y retocarlos. En la GUI, pestaña *Secciones* → *Detectar
+  automáticamente*. El preset `auto_sections` lo trae todo configurado.
+
+### Fondo que vibra y hace zoom con la música
+
+En `background`, `pulse` es el zoom al ritmo, `zoom` un aumento fijo (para que la vibración no muestre
+bordes), y `shake` + `shake_rotation` la vibración en píxeles y grados. Cada uno con su disparador:
+
+```yaml
+background:
+  type: image
+  image: portada.jpg
+  blur: 10
+  pulse: 0.06
+  pulse_trigger: kick
+  zoom: 1.08
+  shake: 8
+  shake_trigger: kick
+  shake_rotation: 0.4
+```
+
+Funciona igual con `type: video` y con gradientes. Para el look Trap Nation clásico usa `pulse_trigger: bass`
+con `pulse: 0.05`, que respira con el bajo en lugar de golpear con cada kick.
 
 ### Diseño típico: fondo + foto del artista + títulos
 

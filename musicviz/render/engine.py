@@ -13,6 +13,7 @@ from ..config import ProjectConfig
 from ..effects import build_effect
 from ..layers import Background, build_layer
 from .canvas import Canvas, RenderContext, float_to_uint8, premultiplied_to_rgba8
+from .sections import SectionTimeline, resolve_sections
 
 
 class Scene:
@@ -32,6 +33,7 @@ class Scene:
             effect.prepare(self.ctx, features)
         self.transparent = bool(project.output.transparent)
         self.canvas = Canvas(width, height, track_alpha=self.transparent)
+        self.timeline = SectionTimeline(resolve_sections(project, features))
 
     @property
     def channels(self) -> int:
@@ -40,18 +42,30 @@ class Scene:
     def render_float(self, index: int) -> np.ndarray:
         """Frame float32: (H, W, 3) RGB o, en modo transparente, (H, W, 4) RGB premultiplicado + alfa."""
         frame = self.features.frame(index)
+        section = self.timeline.state_at(frame.time)
+        frame.palette = section.palette
+        frame.intensity = section.intensity
+        frame.section = section.name
         canvas = self.canvas
         if self.transparent:
             canvas.clear()
         else:
-            self.background.render(canvas, frame)
+            self.background.render(canvas, frame, section.background)
         for layer in self.layers:
+            if not section.allows_layer(layer.cfg.name, layer.cfg.type):
+                continue
+            if layer.cfg.sections is not None and section.name not in layer.cfg.sections:
+                continue
             if layer.begin_frame(frame):
                 layer.render(canvas, frame)
         img = canvas.img
         if self.transparent:
             img = np.concatenate([img, canvas.alpha], axis=2)
         for effect in self.effects:
+            if not section.allows_effect(effect.cfg.name, effect.cfg.type):
+                continue
+            if effect.cfg.sections is not None and section.name not in effect.cfg.sections:
+                continue
             img = effect.apply(img, frame)
         return img
 

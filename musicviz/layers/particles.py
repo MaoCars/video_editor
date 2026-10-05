@@ -17,7 +17,7 @@ import numpy as np
 from ..audio.analysis import AudioFeatures, FrameFeatures
 from ..config import ParticlesLayer
 from ..render.canvas import Canvas, RenderContext
-from ..utils.color import gradient_lut, with_alpha
+from ..utils.color import with_alpha
 from .base import Layer
 
 
@@ -29,7 +29,7 @@ class Particles(Layer[ParticlesLayer]):
         rng = np.random.default_rng(cfg.seed)
         w, h = ctx.width, ctx.height
         s = ctx.scale
-        self.colors_lut = gradient_lut(cfg.colors, 256)
+        self.colors_lut = self._lut_static[1]
         self.cx, self.cy = ctx.rel(cfg.position)
         self.emit_r = cfg.emitter_radius * ctx.min_dim
 
@@ -122,8 +122,11 @@ class Particles(Layer[ParticlesLayer]):
         cfg = self.cfg
         w, h = self.ctx.width, self.ctx.height
         layer = canvas.new_layer()
+        self.colors_lut = self.luts(frame)[1]
         t = frame.time
-        size_k = 1.0 + cfg.react_size * frame.bass
+        inten = self.intensity
+        size_k = (1.0 + cfg.react_size * frame.bass) * (0.75 + 0.25 * inten)
+        alpha_k = min(inten, 1.0)
 
         # ambiente -------------------------------------------------------------
         if cfg.count > 0:
@@ -142,7 +145,7 @@ class Particles(Layer[ParticlesLayer]):
             pos[:, 0] = (pos[:, 0] + margin) % (w + 2 * margin) - margin
             pos[:, 1] = (pos[:, 1] + margin) % (h + 2 * margin) - margin
             tw = 1.0 - cfg.twinkle * 0.5 * (1.0 + np.sin(self.amb_phase + t * 3.0 + self.amb_speed * 0.01))
-            level = 0.55 + 0.45 * frame.rms
+            level = (0.55 + 0.45 * frame.rms) * alpha_k
             xs, ys = pos[:, 0].tolist(), pos[:, 1].tolist()
             sizes = (self.amb_size * size_k).tolist()
             tws = tw.tolist()
@@ -167,7 +170,7 @@ class Particles(Layer[ParticlesLayer]):
                 p[:, 1] += 0.5 * self.gravity * dt * dt
                 drag = 1.0 / (1.0 + dt * 1.5)  # frena suavemente
                 p = self.burst_p0[b] + (p - self.burst_p0[b]) * drag
-                alpha = (1.0 - frac) ** 1.5
+                alpha = (1.0 - frac) ** 1.5 * alpha_k
                 sizes = self.burst_size[b] * (1.0 - 0.6 * frac) * size_k
                 xs, ys = p[:, 0].tolist(), p[:, 1].tolist()
                 alphas, sz = alpha.tolist(), sizes.tolist()

@@ -9,7 +9,7 @@ import numpy as np
 from ..audio.analysis import AudioFeatures, FrameFeatures
 from ..config import WaveformLayer
 from ..render.canvas import Canvas, RenderContext
-from ..utils.color import gradient, to_cv
+from ..utils.color import to_cv
 from ..utils.mathx import moving_average
 from .base import Layer
 
@@ -19,7 +19,7 @@ class Waveform(Layer[WaveformLayer]):
         super().prepare(ctx, features)
         self.features = features
         cfg = self.cfg
-        self.colors_lut = gradient(cfg.colors, 256)
+        self.colors_lut = self._lut_static[0]
         self.cx, self.cy = ctx.rel(cfg.position)
         self.area_w = cfg.width * ctx.width
         self.amp = cfg.amplitude * ctx.height
@@ -39,6 +39,7 @@ class Waveform(Layer[WaveformLayer]):
     def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
         assert self.ctx is not None
         cfg = self.cfg
+        self.colors_lut = self.luts(frame)[0]
         layer = canvas.new_layer()
         s = self._samples(frame)
         n = len(s)

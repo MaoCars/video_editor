@@ -31,7 +31,7 @@ class Effect(Generic[C]):
             return 0.0
         if cfg.end is not None and frame.time > cfg.end:
             return 0.0
-        return frame.drive(cfg.trigger, cfg.threshold) * cfg.intensity
+        return frame.drive(cfg.trigger, cfg.threshold) * cfg.intensity * frame.intensity
 
     def apply(self, img: np.ndarray, frame: FrameFeatures) -> np.ndarray:  # pragma: no cover - interfaz
         raise NotImplementedError

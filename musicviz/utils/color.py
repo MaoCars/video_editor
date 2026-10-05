@@ -109,3 +109,20 @@ def gradient_lut(colors: Sequence[str], n: int = 256) -> list[tuple[int, int, in
 def with_alpha(rgb: tuple[int, int, int], alpha: float) -> tuple[int, int, int, int]:
     a = int(alpha * 255 + 0.5)
     return (rgb[0], rgb[1], rgb[2], 0 if a < 0 else 255 if a > 255 else a)
+
+
+def gradient_from_stops(stops: np.ndarray, n: int = 256) -> np.ndarray:
+    """Como `gradient` pero a partir de paradas RGBA ya numéricas (k, 4)."""
+    stops = np.asarray(stops, dtype=np.float32)
+    if len(stops) == 1:
+        return np.repeat(stops, n, axis=0)
+    xs = np.linspace(0.0, 1.0, len(stops), dtype=np.float32)
+    t = np.linspace(0.0, 1.0, n, dtype=np.float32)
+    out = np.empty((n, 4), np.float32)
+    for c in range(4):
+        out[:, c] = np.interp(t, xs, stops[:, c])
+    return out
+
+
+def lut_to_int(lut: np.ndarray) -> list[tuple[int, int, int]]:
+    return [(int(r * 255 + 0.5), int(g * 255 + 0.5), int(b * 255 + 0.5)) for r, g, b, _ in lut]

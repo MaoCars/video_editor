@@ -96,6 +96,10 @@ class FrameFeatures:
     kick: float
     drop: float
     progress: float
+    # Estado de la sección activa (lo rellena el motor de render antes de dibujar)
+    palette: Optional[np.ndarray] = None  # (n, 4) RGBA float
+    intensity: float = 1.0
+    section: str = ""
 
     def drive(self, trigger: str, threshold: float = 0.5) -> float:
         """Valor 0..1 que controla un efecto según el tipo de disparador."""

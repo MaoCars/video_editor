@@ -7,7 +7,7 @@ import numpy as np
 from ..audio.analysis import AudioFeatures, FrameFeatures
 from ..config import BarsLayer
 from ..render.canvas import Canvas, RenderContext
-from ..utils.color import gradient, to_cv
+from ..utils.color import to_cv
 from .base import Layer
 
 
@@ -36,7 +36,7 @@ class Bars(Layer[BarsLayer]):
         super().prepare(ctx, features)
         cfg = self.cfg
         self.n = cfg.bands or features.spectrum.shape[1]
-        self.colors_lut = gradient(cfg.colors, 256)
+        self.colors_lut = self._lut_static[0]
         area_w = cfg.width * ctx.width
         self.slot = area_w / self.n
         self.bar_w = max(self.slot * (1.0 - cfg.gap), 1.0)
@@ -53,6 +53,7 @@ class Bars(Layer[BarsLayer]):
     def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
         assert self.ctx is not None
         cfg = self.cfg
+        self.colors_lut = self.luts(frame)[0]
         layer = canvas.new_layer()
         values = build_values(frame.spectrum, self.n, cfg.symmetric)
         if cfg.bass_boost > 0:

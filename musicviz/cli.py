@@ -172,6 +172,41 @@ def preview(
 
 
 @app.command()
+def sections(
+    audio: Path = typer.Argument(..., help="Archivo de audio (o proyecto .yaml)."),
+    fps: int = typer.Option(60, help="FPS de referencia."),
+    min_length: float = typer.Option(6.0, "--min-length", help="Duración mínima de una sección (s)."),
+):
+    """Detecta las secciones (calm / build / drop) de una canción y las imprime en YAML para pegarlas en el proyecto."""
+    import yaml
+
+    from .audio.analysis import analyze as analyze_audio
+    from .config import AudioConfig, AutoSectionsConfig
+    from .render.sections import detect_sections
+
+    if audio.suffix.lower() in (".yaml", ".yml"):
+        cfg = _load_project(audio)
+        audio_cfg, fps_val, auto = cfg.audio, cfg.output.fps, cfg.auto_sections.model_copy(update={"min_length": min_length})
+    else:
+        audio_cfg, fps_val, auto = AudioConfig(file=str(audio)), fps, AutoSectionsConfig(min_length=min_length)
+    with console.status("Analizando..."):
+        f = analyze_audio(audio_cfg, fps=float(fps_val))
+    found = detect_sections(f, auto)
+    table = Table(title=f"Secciones detectadas ({len(found)})")
+    table.add_column("#")
+    table.add_column("Tipo")
+    table.add_column("Inicio", justify="right")
+    table.add_column("Fin", justify="right")
+    table.add_column("Duración", justify="right")
+    for i, sec in enumerate(found, 1):
+        table.add_row(str(i), sec.name, f"{sec.start:.1f}s", f"{sec.end:.1f}s", f"{(sec.end or 0) - sec.start:.1f}s")
+    console.print(table)
+    console.print("\nPega esto en tu proyecto (o usa `sections: auto`):\n")
+    data = {"sections": [sec.model_dump(mode="json", exclude_none=True) for sec in found]}
+    console.print(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), highlight=False)
+
+
+@app.command()
 def fonts(filter: Optional[str] = typer.Argument(None, help="Texto para filtrar por nombre.")):
     """Lista las fuentes del sistema que puedes usar en las capas de texto (campo `font`)."""
     from .layers.text import available_fonts

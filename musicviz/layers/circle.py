@@ -9,7 +9,7 @@ import numpy as np
 from ..audio.analysis import AudioFeatures, FrameFeatures
 from ..config import CircleLayer
 from ..render.canvas import Canvas, RenderContext
-from ..utils.color import gradient, gradient_lut, parse_color, to_cv, with_alpha
+from ..utils.color import parse_color, to_cv, with_alpha
 from .base import Layer
 from .bars import build_values
 
@@ -19,22 +19,23 @@ class CircleSpectrum(Layer[CircleLayer]):
         super().prepare(ctx, features)
         cfg = self.cfg
         self.n = cfg.bands or features.spectrum.shape[1]
-        self.colors_lut = gradient(cfg.colors, 256)
-        self.lut_int = gradient_lut(cfg.colors, 256)
+        self.colors_lut, self.lut_int = self._lut_static
         self.cx, self.cy = ctx.rel(cfg.position)
         self.base_r = cfg.radius * ctx.min_dim
         self.max_len = cfg.length * ctx.min_dim
         self.thick = max(int(round(ctx.px(cfg.thickness))), 1)
         self.ring_thick = max(int(round(ctx.px(cfg.ring_thickness))), 1)
-        self.ring_color = to_cv(parse_color(cfg.ring_color)) if cfg.ring_color else to_cv(self.colors_lut[0])
+        self._ring_fixed = to_cv(parse_color(cfg.ring_color)) if cfg.ring_color else None
+        self.ring_color = self._ring_fixed or to_cv(self.colors_lut[0])
         # Ángulos: con mirror el espectro se refleja (graves arriba, agudos abajo) → forma simétrica.
         self.angles = np.linspace(0.0, 2.0 * math.pi, self.n, endpoint=False, dtype=np.float32)
-        self._angle_lut_cache: tuple[float, np.ndarray] | None = None
+        self._angle_lut_cache: tuple[float, int, np.ndarray] | None = None
 
     def _angle_colors(self, rot: float) -> np.ndarray:
         """Imagen (H, W, 3) uint8 con el gradiente angular (para el estilo 'filled')."""
-        if self._angle_lut_cache is not None and abs(self._angle_lut_cache[0] - rot) < 1e-4:
-            return self._angle_lut_cache[1]
+        lut_id = id(self.colors_lut)
+        if self._angle_lut_cache is not None and abs(self._angle_lut_cache[0] - rot) < 1e-4 and self._angle_lut_cache[1] == lut_id:
+            return self._angle_lut_cache[2]
         assert self.ctx is not None
         ys, xs = np.mgrid[0 : self.ctx.height, 0 : self.ctx.width].astype(np.float32)
         ang = (np.arctan2(ys - self.cy, xs - self.cx) - rot) % (2.0 * math.pi)
@@ -42,7 +43,7 @@ class CircleSpectrum(Layer[CircleLayer]):
         if self.cfg.mirror:
             t = 1.0 - np.abs(2.0 * t - 1.0)
         rgb = (self.colors_lut[(np.clip(t, 0, 1) * 255).astype(np.int32)][..., :3] * 255).astype(np.uint8)
-        self._angle_lut_cache = (rot, rgb)
+        self._angle_lut_cache = (rot, lut_id, rgb)
         return rgb
 
     def _values(self, frame: FrameFeatures) -> np.ndarray:
@@ -70,10 +71,12 @@ class CircleSpectrum(Layer[CircleLayer]):
     def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
         assert self.ctx is not None
         cfg = self.cfg
+        self.colors_lut, self.lut_int = self.luts(frame)
+        self.ring_color = self._ring_fixed or to_cv(self.colors_lut[0])
         layer = canvas.new_layer()
         values = self._values(frame)
         vals = values.tolist()
-        pulse = 1.0 + cfg.pulse * frame.drive(cfg.pulse_trigger)
+        pulse = 1.0 + cfg.pulse * self.intensity * frame.drive(cfg.pulse_trigger)
         rot = math.radians(cfg.rotation + cfg.rotation_speed * frame.time)
         for ring_i in range(cfg.rings):
             spread = 1.0 + ring_i * cfg.ring_spread

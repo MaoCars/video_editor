@@ -135,6 +135,16 @@ LABELS: dict[str, str] = {
     "react_trigger": "Disparador reacción",
     "name": "Nombre",
     "transparent": "Fondo transparente",
+    "sections": "Sólo en secciones",
+    "palette": "Paleta",
+    "background_colors": "Colores del fondo",
+    "transition": "Transición (s)",
+    "pulse_trigger": "Disparador pulso",
+    "shake_trigger": "Disparador vibración",
+    "shake_rotation": "Giro vibración (°)",
+    "min_length": "Duración mínima (s)",
+    "palettes": "Paletas por tipo",
+    "intensities": "Intensidades por tipo",
     "animate_in": "Animación entrada",
     "in_duration": "Duración entrada (s)",
     "animate_out": "Animación salida",
@@ -220,11 +230,13 @@ def field_specs(model_cls: type[BaseModel], exclude: tuple[str, ...] = ()) -> li
             else:
                 specs.append(FieldSpec(name, "str", optional))
         elif origin in (list, typing.List) and get_args(ann) and get_args(ann)[0] is str:
-            specs.append(FieldSpec(name, "colors", optional))
+            specs.append(FieldSpec(name, "strlist" if name in ("effects", "layers", "sections") else "colors", optional))
         elif origin in (tuple, typing.Tuple):
             specs.append(FieldSpec(name, "pair", optional))
         elif isinstance(ann, type) and issubclass(ann, BaseModel):
             specs.append(FieldSpec(name, "model", optional, model_cls=ann))
+        elif origin in (dict, typing.Dict):
+            continue  # diccionarios (paletas por tipo): se editan en el YAML
         else:  # pragma: no cover - tipos no previstos se editan como texto
             specs.append(FieldSpec(name, "str", optional))
     return specs
@@ -234,7 +246,7 @@ def format_value(value: Any, spec: FieldSpec) -> str:
     """Representación de texto para mostrar en un Entry."""
     if value is None:
         return ""
-    if spec.kind == "colors":
+    if spec.kind in ("colors", "strlist"):
         return ", ".join(value)
     if spec.kind == "pair":
         return ", ".join(_fmt_num(v) for v in value)
@@ -273,7 +285,7 @@ def parse_value(raw: Any, spec: FieldSpec) -> Any:
             if str(c) == str(raw):
                 return c
         raise ValueError(f"Valor no permitido: {raw}")
-    if spec.kind == "colors":
+    if spec.kind in ("colors", "strlist"):
         parts = [p.strip() for p in str(raw).replace(";", ",").split(",") if p.strip()]
         return parts
     if spec.kind == "pair":

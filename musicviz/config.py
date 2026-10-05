@@ -24,9 +24,14 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+PALETTE = "palette"
+
+
 def _validate_colors(values: List[str]) -> List[str]:
     if not values:
         raise ValueError("Se requiere al menos un color")
+    if values == [PALETTE]:
+        return values  # la capa toma los colores de la sección activa
     for v in values:
         parse_color(v)
     return values
@@ -110,7 +115,15 @@ class BackgroundConfig(StrictModel):
     blur: float = 0.0
     darken: float = 0.0
     pulse: float = 0.0
-    """Zoom del fondo proporcional al kick (0.03 = 3%)."""
+    """Zoom del fondo al ritmo (0.05 = 5 %). Estilo Trap Nation: pulse 0.04-0.08 con pulse_trigger kick o bass."""
+    pulse_trigger: Trigger = "kick"
+    zoom: float = 1.0
+    """Zoom fijo del fondo (1.1 = 10 % más grande; útil para que el shake no muestre bordes)."""
+    shake: float = 0.0
+    """Vibración del fondo en px (a 1080p) proporcional al disparador."""
+    shake_trigger: Trigger = "kick"
+    shake_rotation: float = 0.0
+    """Grados máximos de giro en la vibración."""
     react: float = 0.0
     """Brillo extra proporcional a la energía (0..1)."""
     react_trigger: Trigger = "bass"
@@ -130,6 +143,10 @@ class LayerBase(StrictModel):
     `animate_in`/`animate_out` definen cómo aparece y desaparece. Texto e imagen soportan todas las
     animaciones; el resto de capas usan fundido para cualquier animación distinta de `none`."""
 
+    name: Optional[str] = None
+    """Nombre opcional para referirse a la capa desde `sections`."""
+    sections: Optional[List[str]] = None
+    """Si se indica, la capa sólo existe en las secciones con esos nombres (p. ej. ["drop"])."""
     enabled: bool = True
     opacity: float = Field(1.0, ge=0.0, le=1.0)
     blend: Literal["normal", "add", "screen"] = "normal"
@@ -330,6 +347,10 @@ LayerConfig = Annotated[
 
 
 class EffectBase(StrictModel):
+    name: Optional[str] = None
+    """Nombre opcional para referirse al efecto desde `sections`."""
+    sections: Optional[List[str]] = None
+    """Si se indica, el efecto sólo actúa en las secciones con esos nombres (p. ej. ["drop"])."""
     enabled: bool = True
     trigger: Trigger = "always"
     threshold: float = Field(0.5, ge=0.0, lt=1.0)
@@ -446,6 +467,58 @@ EffectConfig = Annotated[
 ]
 
 
+# --------------------------------------------------------------------------- secciones
+
+
+class SectionConfig(StrictModel):
+    """Tramo de la canción con su propio diseño.
+
+    Las capas con `colors: [palette]` toman `palette`; el fondo (solid/gradient/radial) toma
+    `background_colors`; `intensity` escala glow, pulsos, partículas y efectos; `effects`/`layers`
+    restringen qué efectos y capas (por `name` o por `type`) existen en el tramo. Al entrar en la
+    sección los colores e intensidad se mezclan con los de la anterior durante `transition` segundos.
+    """
+
+    name: str = ""
+    start: float = Field(0.0, ge=0.0)
+    end: Optional[float] = None
+    """None = hasta el inicio de la siguiente sección (o el final de la canción)."""
+    palette: Optional[List[Color]] = None
+    background_colors: Optional[List[Color]] = None
+    intensity: float = Field(1.0, ge=0.0)
+    effects: Optional[List[str]] = None
+    layers: Optional[List[str]] = None
+    transition: float = Field(0.5, ge=0.0)
+
+    @field_validator("palette", "background_colors")
+    @classmethod
+    def _vc(cls, v):
+        if v is not None:
+            _validate_colors(v)
+        return v
+
+
+DEFAULT_PALETTES: dict[str, List[str]] = {
+    "calm": ["#4cc9f0", "#4361ee"],
+    "build": ["#f72585", "#7209b7"],
+    "drop": ["#ff2a6d", "#ff7a00", "#ffd166"],
+}
+DEFAULT_INTENSITIES: dict[str, float] = {"calm": 0.7, "build": 1.0, "drop": 1.3}
+
+
+class AutoSectionsConfig(StrictModel):
+    """Parámetros de la detección automática (`sections: auto`)."""
+
+    min_length: float = Field(6.0, gt=0.0)
+    """Duración mínima de una sección (segundos); las más cortas se funden con la vecina."""
+    transition: float = Field(0.6, ge=0.0)
+    palettes: dict[str, List[Color]] = dict(DEFAULT_PALETTES)
+    """Colores de cada tipo de sección: calm (calma), build (subida), drop."""
+    intensities: dict[str, float] = dict(DEFAULT_INTENSITIES)
+    background_colors: dict[str, List[Color]] = {}
+    """Opcional: colores del fondo por tipo de sección."""
+
+
 # --------------------------------------------------------------------------- proyecto
 
 
@@ -456,6 +529,9 @@ class ProjectConfig(StrictModel):
     background: BackgroundConfig = BackgroundConfig()
     layers: List[LayerConfig] = []
     effects: List[EffectConfig] = []
+    sections: Union[Literal["auto"], List[SectionConfig]] = []
+    """Lista de tramos con su diseño, o "auto" para detectarlos a partir de la energía de la canción."""
+    auto_sections: AutoSectionsConfig = AutoSectionsConfig()
 
     @classmethod
     def from_dict(cls, data: dict) -> "ProjectConfig":

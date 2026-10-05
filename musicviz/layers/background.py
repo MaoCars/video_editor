@@ -111,6 +111,8 @@ class Background:
         self.ctx: RenderContext | None = None
         self.video: VideoSource | None = None
         self._video_cache: tuple[int, np.ndarray] | None = None
+        self._grad_index: np.ndarray | None = None  # posición 0..255 de cada píxel en el gradiente
+        self._section_cache: tuple[bytes, np.ndarray] | None = None
 
     def prepare(self, ctx: RenderContext, features: AudioFeatures) -> None:
         self.ctx = ctx
@@ -129,13 +131,15 @@ class Background:
             denom = abs(dx) + abs(dy)
             t = np.clip(proj / max(denom, 1e-6) + 0.5, 0.0, 1.0)
             lut = gradient(cfg.colors, 256)[:, :3]
-            base = lut[(t * 255).astype(np.int32)]
+            self._grad_index = (t * 255).astype(np.uint8)
+            base = lut[self._grad_index]
         elif cfg.type == "radial":
             xs = (np.arange(w, dtype=np.float32) - w / 2) / (w / 2)
             ys = (np.arange(h, dtype=np.float32) - h / 2) / (h / 2)
             r = np.sqrt(xs[None, :] ** 2 + ys[:, None] ** 2) / math.sqrt(2.0)
             lut = gradient(cfg.colors, 256)[:, :3]
-            base = lut[(np.clip(r, 0, 1) * 255).astype(np.int32)]
+            self._grad_index = (np.clip(r, 0, 1) * 255).astype(np.uint8)
+            base = lut[self._grad_index]
         elif cfg.type == "image":
             if not cfg.image:
                 raise ValueError("background.type=image requiere background.image")
@@ -172,17 +176,56 @@ class Background:
         self._video_cache = (frame.index, img)
         return img
 
-    def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
+    def _section_base(self, stops: np.ndarray) -> np.ndarray:
+        """Fondo sólido/gradiente/radial recoloreado con la paleta de la sección (con caché)."""
+        assert self.base is not None
+        key = stops.tobytes()
+        if self._section_cache is not None and self._section_cache[0] == key:
+            return self._section_cache[1]
+        cfg = self.cfg
+        if self._grad_index is not None:
+            xs = np.linspace(0, 1, len(stops))
+            lut = np.stack([np.interp(np.linspace(0, 1, 256), xs, stops[:, c]) for c in range(3)], axis=1).astype(np.float32)
+            base = lut[self._grad_index]
+        elif cfg.type == "solid":
+            base = np.empty_like(self.base)
+            base[:] = stops[0, :3]
+        else:
+            return self.base  # imagen / video: la paleta de sección no se aplica
+        if cfg.darken > 0:
+            base *= np.float32(1.0 - cfg.darken)
+        base = np.ascontiguousarray(base, dtype=np.float32)
+        self._section_cache = (key, base)
+        return base
+
+    def render(self, canvas: Canvas, frame: FrameFeatures, section_colors: np.ndarray | None = None) -> None:
         assert self.base is not None and self.ctx is not None
         cfg = self.cfg
-        img = self._video_frame(frame) if self.video is not None else self.base
+        if self.video is not None:
+            img = self._video_frame(frame)
+        elif section_colors is not None:
+            img = self._section_base(section_colors)
+        else:
+            img = self.base
+        intensity = frame.intensity
+        zoom = cfg.zoom
         if cfg.pulse > 0:
-            k = frame.drive("kick") if cfg.react_trigger == "always" else frame.drive(cfg.react_trigger)
-            z = 1.0 + cfg.pulse * k
-            if z > 1.0005:
-                h, w = img.shape[:2]
-                M = cv2.getRotationMatrix2D((w / 2, h / 2), 0.0, z)
-                img = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+            zoom *= 1.0 + cfg.pulse * intensity * frame.drive(cfg.pulse_trigger)
+        dx = dy = 0.0
+        angle = 0.0
+        if cfg.shake > 0 or cfg.shake_rotation > 0:
+            k = frame.drive(cfg.shake_trigger) * intensity
+            if k > 0.001:
+                rng = np.random.default_rng(4242 + frame.index)
+                amp = self.ctx.px(cfg.shake) * k
+                dx, dy = rng.uniform(-amp, amp, 2)
+                angle = float(rng.uniform(-1, 1)) * cfg.shake_rotation * k
+        if abs(zoom - 1.0) > 0.0005 or abs(dx) > 0.3 or abs(dy) > 0.3 or abs(angle) > 0.01:
+            h, w = img.shape[:2]
+            M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, zoom)
+            M[0, 2] += dx
+            M[1, 2] += dy
+            img = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
         if cfg.react > 0:
             img = img * (1.0 + cfg.react * frame.drive(cfg.react_trigger))
         canvas.fill(img)
