@@ -27,13 +27,17 @@ audio:
   beat_sensitivity: 1.0
 
 background:
-  type: radial          # solid | gradient | radial | image
+  type: radial          # solid | gradient | radial | image | video
   colors: ["#15052b", "#040208"]
   # type: image
   # image: portada.jpg
   # image_fit: cover
   # blur: 12
   # darken: 0.4
+  # type: video
+  # video: fondo.mp4
+  # video_loop: true
+  # video_start: 0
   pulse: 0.03           # zoom con el kick
   react: 0.12           # brillo con los graves
   react_trigger: bass
@@ -112,6 +116,13 @@ layers:
     shadow: 0.4
     pulse: 0.03
     glow: 0.4
+    start: 1              # aparece en el segundo 1...
+    animate_in: slide_up  # ...subiendo (fade, slide_*, zoom_in, zoom_out, pop, blur)
+    in_duration: 0.8
+    easing: ease_out
+    # end: 30             # y desaparece en el 30
+    # animate_out: fade
+    # out_duration: 1
 
   - type: progress
     position: [0.5, 0.975]

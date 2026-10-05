@@ -46,7 +46,8 @@ class Scene:
         else:
             self.background.render(canvas, frame)
         for layer in self.layers:
-            layer.render(canvas, frame)
+            if layer.begin_frame(frame):
+                layer.render(canvas, frame)
         img = canvas.img
         if self.transparent:
             img = np.concatenate([img, canvas.alpha], axis=2)

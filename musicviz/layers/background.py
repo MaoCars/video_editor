@@ -43,11 +43,74 @@ def fit_image(img: np.ndarray, width: int, height: int, mode: str) -> np.ndarray
     return out
 
 
+class VideoSource:
+    """Lee frames de un video por tiempo. Lee en secuencia cuando los frames son consecutivos
+    (lo habitual, porque cada proceso renderiza bloques de frames seguidos) y busca sólo si hay saltos."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self.cap = cv2.VideoCapture(path)
+        if not self.cap.isOpened():
+            raise FileNotFoundError(f"No se pudo abrir el video de fondo: {path}")
+        self.fps = float(self.cap.get(cv2.CAP_PROP_FPS)) or 30.0
+        self.n_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if self.n_frames <= 0:
+            self.n_frames = self._count_frames()
+        if self.n_frames <= 0:
+            raise ValueError(f"El video de fondo no tiene frames legibles: {path}")
+        self.duration = self.n_frames / self.fps
+        self._last_index = -1
+        self._last_frame: np.ndarray | None = None
+
+    def _count_frames(self) -> int:
+        n = 0
+        while True:
+            ok = self.cap.grab()
+            if not ok:
+                break
+            n += 1
+        self.cap.release()
+        self.cap = cv2.VideoCapture(self.path)
+        return n
+
+    def frame_at(self, t: float, loop: bool) -> np.ndarray:
+        """Frame RGB uint8 en el segundo t del video (con bucle o congelando el último frame)."""
+        if loop:
+            t = t % self.duration
+        idx = int(t * self.fps)
+        idx = min(max(idx, 0), self.n_frames - 1)
+        if idx == self._last_index and self._last_frame is not None:
+            return self._last_frame
+        if idx != self._last_index + 1:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+        ok, bgr = self.cap.read()
+        if not ok:
+            # Fin inesperado (p. ej. recuento de frames impreciso): volver al principio o repetir el último
+            if self._last_frame is not None and not loop:
+                return self._last_frame
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ok, bgr = self.cap.read()
+            if not ok:
+                raise RuntimeError(f"No se pudo leer el video de fondo: {self.path}")
+            idx = 0
+        self._last_index = idx
+        self._last_frame = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        return self._last_frame
+
+    def release(self) -> None:
+        try:
+            self.cap.release()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 class Background:
     def __init__(self, cfg: BackgroundConfig):
         self.cfg = cfg
         self.base: np.ndarray | None = None
         self.ctx: RenderContext | None = None
+        self.video: VideoSource | None = None
+        self._video_cache: tuple[int, np.ndarray] | None = None
 
     def prepare(self, ctx: RenderContext, features: AudioFeatures) -> None:
         self.ctx = ctx
@@ -81,16 +144,38 @@ class Background:
             base = img[..., :3].astype(np.float32) / 255.0
             if cfg.blur > 0:
                 base = fast_blur(base, ctx.px(cfg.blur))
+        elif cfg.type == "video":
+            if not cfg.video:
+                raise ValueError("background.type=video requiere background.video")
+            self.video = VideoSource(cfg.video)
+            base = np.zeros((h, w, 3), np.float32)
         else:  # pragma: no cover
             raise ValueError(cfg.type)
-        if cfg.darken > 0:
+        if cfg.darken > 0 and cfg.type != "video":
             base = base * (1.0 - cfg.darken)
         self.base = np.ascontiguousarray(base, dtype=np.float32)
+
+    def _video_frame(self, frame: FrameFeatures) -> np.ndarray:
+        assert self.video is not None and self.ctx is not None
+        cfg = self.cfg
+        if self._video_cache is not None and self._video_cache[0] == frame.index:
+            return self._video_cache[1]
+        t = cfg.video_start + frame.time * cfg.video_speed
+        rgb = self.video.frame_at(t, cfg.video_loop)
+        rgba = cv2.cvtColor(rgb, cv2.COLOR_RGB2RGBA)
+        fitted = fit_image(rgba, self.ctx.width, self.ctx.height, cfg.image_fit)
+        img = fitted[..., :3].astype(np.float32) * np.float32(1.0 / 255.0)
+        if cfg.blur > 0:
+            img = fast_blur(img, self.ctx.px(cfg.blur))
+        if cfg.darken > 0:
+            img *= np.float32(1.0 - cfg.darken)
+        self._video_cache = (frame.index, img)
+        return img
 
     def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
         assert self.base is not None and self.ctx is not None
         cfg = self.cfg
-        img = self.base
+        img = self._video_frame(frame) if self.video is not None else self.base
         if cfg.pulse > 0:
             k = frame.drive("kick") if cfg.react_trigger == "always" else frame.drive(cfg.react_trigger)
             z = 1.0 + cfg.pulse * k

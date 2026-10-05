@@ -135,6 +135,16 @@ LABELS: dict[str, str] = {
     "react_trigger": "Disparador reacción",
     "name": "Nombre",
     "transparent": "Fondo transparente",
+    "animate_in": "Animación entrada",
+    "in_duration": "Duración entrada (s)",
+    "animate_out": "Animación salida",
+    "out_duration": "Duración salida (s)",
+    "easing": "Suavizado animación",
+    "slide_distance": "Distancia deslizamiento",
+    "video": "Video de fondo",
+    "video_start": "Inicio del video (s)",
+    "video_loop": "Repetir video",
+    "video_speed": "Velocidad del video",
     "aspect": "Proporción ancho/alto",
     "fit": "Encaje",
     "focus": "Foco del recorte (x, y)",
@@ -157,7 +167,7 @@ LABELS: dict[str, str] = {
 }
 
 COLOR_FIELDS = {"color", "bg_color", "ring_color", "border_color", "stroke_color", "box_color"}
-FILE_FIELDS = {"file", "image", "path"}
+FILE_FIELDS = {"file", "image", "path", "video"}
 
 
 @dataclass

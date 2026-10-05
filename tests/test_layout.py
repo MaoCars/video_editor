@@ -217,3 +217,100 @@ def test_gui_field_kinds_for_new_fields():
     assert kinds["font"] == "font" and kinds["stroke_color"] == "color" and kinds["box_color"] == "color"
     kinds = {s.name: s.kind for s in field_specs(ImageLayer)}
     assert kinds["anchor"] == "choice" and kinds["focus"] == "pair" and kinds["border_color"] == "color"
+
+
+# ---------------------------------------------------------------- animaciones
+
+
+def test_easing_bounds():
+    from musicviz.layers.animation import ease
+
+    for kind in ("linear", "ease_in", "ease_out", "ease_in_out", "back", "bounce"):
+        assert ease(kind, 0.0) == pytest.approx(0.0, abs=1e-6)
+        assert ease(kind, 1.0) == pytest.approx(1.0, abs=1e-6)
+        assert ease(kind, -1) == pytest.approx(0.0, abs=1e-6) and ease(kind, 2) == pytest.approx(1.0, abs=1e-6)
+
+
+def test_anim_state_windows_and_motion():
+    from musicviz.layers.animation import anim_state
+
+    cfg = TextLayer(type="text", text="x", start=2.0, end=6.0, animate_in="slide_left", in_duration=1.0, animate_out="zoom_out", out_duration=1.0, easing="linear", slide_distance=0.1)
+    assert not anim_state(cfg, 1.0, 10.0, 1000).visible
+    assert not anim_state(cfg, 7.0, 10.0, 1000).visible
+    mid = anim_state(cfg, 4.0, 10.0, 1000)
+    assert mid.visible and mid.is_identity
+    half_in = anim_state(cfg, 2.5, 10.0, 1000)
+    assert half_in.alpha == pytest.approx(0.5) and half_in.dx == pytest.approx(50.0) and half_in.dy == 0
+    half_out = anim_state(cfg, 5.5, 10.0, 1000)
+    assert half_out.alpha == pytest.approx(0.5) and half_out.scale == pytest.approx(1.3)
+    # sin start/end: entra al principio y sale al final de la canción
+    cfg2 = TextLayer(type="text", text="x", animate_in="fade", in_duration=1.0, animate_out="fade", out_duration=1.0, easing="linear")
+    assert anim_state(cfg2, 0.25, 10.0, 1000).alpha == pytest.approx(0.25)
+    assert anim_state(cfg2, 9.75, 10.0, 1000).alpha == pytest.approx(0.25)
+    assert anim_state(cfg2, 5.0, 10.0, 1000).is_identity
+
+
+@pytest.mark.parametrize("anim", ["fade", "slide_left", "slide_up", "zoom_in", "pop", "blur"])
+def test_layers_animate_in_render(audio_cfg, features, photo, anim):
+    layers = [
+        {"type": "text", "text": "HOLA", "size": 0.3, "start": 1.0, "animate_in": anim, "in_duration": 1.0, "end": 4.0, "animate_out": "fade", "out_duration": 0.5},
+        {"type": "image", "file": photo, "size": 0.3, "position": [0.95, 0.5], "anchor": "right", "start": 1.0, "animate_in": anim, "in_duration": 1.0, "pulse": 0},
+        {"type": "bars", "start": 1.0, "animate_in": anim, "in_duration": 1.0, "end": 4.0, "colors": ["#ffffff"]},
+    ]
+    project = _project(audio_cfg, background={"type": "solid", "color": "#000000"}, layers=layers)
+    scene = Scene(project, features, W, H)
+    before = scene.render(int(0.5 * 30))
+    assert before.max() < 5  # nada visible antes de start
+    early = scene.render(int(1.1 * 30))
+    full = scene.render(int(2.5 * 30))
+    assert full.sum() > early.sum() > 0  # va apareciendo
+    gone = scene.render(int(4.5 * 30))
+    assert gone[:, : int(W * 0.55)].max() < 5  # el texto ya salió (la imagen sigue a la derecha)
+
+
+# ---------------------------------------------------------------- video de fondo
+
+
+@pytest.fixture
+def clip(tmp_path):
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg no disponible")
+    path = tmp_path / "clip.mp4"
+    # 2 s a 30 fps: rojo el primer segundo, verde el segundo
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=red:s=64x36:r=30:d=1", "-f", "lavfi", "-i", "color=green:s=64x36:r=30:d=1",
+         "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0", "-pix_fmt", "yuv420p", str(path)],
+        check=True,
+    )
+    return str(path)
+
+
+def test_video_source_sequential_and_seek(clip):
+    from musicviz.layers.background import VideoSource
+
+    src = VideoSource(clip)
+    assert src.n_frames == 60 and src.fps == pytest.approx(30.0) and src.duration == pytest.approx(2.0)
+    red = src.frame_at(0.5, loop=True)
+    green = src.frame_at(1.5, loop=True)  # salto -> búsqueda
+    assert red[0, 0, 0] > 150 and red[0, 0, 1] < 80
+    assert green[0, 0, 1] > 100 and green[0, 0, 0] < 80
+    assert src.frame_at(2.5, loop=True)[0, 0, 0] > 150  # bucle: vuelve al rojo
+    assert src.frame_at(5.0, loop=False)[0, 0, 1] > 100  # sin bucle: se congela el último (verde)
+    src.release()
+
+
+def test_video_background_render(audio_cfg, features, clip):
+    project = _project(audio_cfg, background={"type": "video", "video": clip, "video_loop": True, "darken": 0.0, "pulse": 0.02}, layers=[])
+    scene = Scene(project, features, W, H)
+    f_red = scene.render(int(0.5 * 30))
+    f_green = scene.render(int(1.5 * 30))
+    f_loop = scene.render(int(2.5 * 30))
+    assert f_red[H // 2, W // 2, 0] > 150 and f_green[H // 2, W // 2, 1] > 100 and f_loop[H // 2, W // 2, 0] > 150
+    # velocidad x2: a 0.75 s del proyecto ya va por el segundo verde del video
+    project2 = _project(audio_cfg, background={"type": "video", "video": clip, "video_speed": 2.0}, layers=[])
+    assert Scene(project2, features, W, H).render(int(0.75 * 30))[H // 2, W // 2, 1] > 100
+    # frames en paralelo coinciden con los secuenciales
+    from musicviz.render.engine import iter_frames
+
+    idx = list(range(0, 24))
+    assert list(iter_frames(project, features, W, H, idx, workers=1)) == list(iter_frames(project, features, W, H, idx, workers=2))

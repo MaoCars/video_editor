@@ -200,11 +200,14 @@ class TextOverlay(Layer[TextLayer]):
     def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
         assert self.ctx is not None
         cfg = self.cfg
-        scale = self.base_scale * (1.0 + cfg.pulse * frame.drive(cfg.pulse_trigger))
+        anim = self.anim
+        scale = self.base_scale * (1.0 + cfg.pulse * frame.drive(cfg.pulse_trigger)) * anim.scale
         sh, sw = self.sprite.shape[:2]
         w, h = max(int(sw * scale), 1), max(int(sh * scale), 1)
         sprite = cv2.resize(self.sprite, (w, h), interpolation=cv2.INTER_AREA)
-        cx, cy = anchor_center(self.x, self.y, w, h, self.anchor)
+        if anim.blur > 0:
+            sprite = cv2.GaussianBlur(sprite, (0, 0), max(anim.blur * self.ctx.px(14), 0.3))
+        cx, cy = anchor_center(self.x + anim.dx, self.y + anim.dy, w, h, self.anchor)
         layer = canvas.new_layer()
         if self.shadow_sprite is not None:
             ssh, ssw = self.shadow_sprite.shape[:2]

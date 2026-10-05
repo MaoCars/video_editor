@@ -94,12 +94,19 @@ class AudioConfig(StrictModel):
 
 
 class BackgroundConfig(StrictModel):
-    type: Literal["solid", "gradient", "radial", "image"] = "gradient"
+    type: Literal["solid", "gradient", "radial", "image", "video"] = "gradient"
     color: Color = "#0a0a14"
     colors: List[Color] = ["#0a0a14", "#1d0b3a"]
     angle: float = 90.0
     image: Optional[str] = None
     image_fit: Literal["cover", "contain", "stretch"] = "cover"
+    video: Optional[str] = None
+    """Archivo de video de fondo (mp4, mov, webm...). Su audio se ignora; se usa el de la canción."""
+    video_start: float = 0.0
+    """Segundo del video en el que empezar."""
+    video_loop: bool = True
+    """Si el video es más corto que la canción, repetirlo (si no, se congela el último frame)."""
+    video_speed: float = Field(1.0, gt=0.0)
     blur: float = 0.0
     darken: float = 0.0
     pulse: float = 0.0
@@ -114,13 +121,30 @@ class BackgroundConfig(StrictModel):
 # --------------------------------------------------------------------------- capas
 
 
+Animation = Literal["none", "fade", "slide_left", "slide_right", "slide_up", "slide_down", "zoom_in", "zoom_out", "pop", "blur"]
+Easing = Literal["linear", "ease_in", "ease_out", "ease_in_out", "back", "bounce"]
+
+
 class LayerBase(StrictModel):
+    """Campos comunes. `start`/`end` limitan cuándo existe la capa (segundos; None = toda la canción) y
+    `animate_in`/`animate_out` definen cómo aparece y desaparece. Texto e imagen soportan todas las
+    animaciones; el resto de capas usan fundido para cualquier animación distinta de `none`."""
+
     enabled: bool = True
     opacity: float = Field(1.0, ge=0.0, le=1.0)
     blend: Literal["normal", "add", "screen"] = "normal"
     position: Tuple[float, float] = (0.5, 0.5)
     glow: float = 0.0
     glow_radius: float = 24.0
+    start: Optional[float] = None
+    end: Optional[float] = None
+    animate_in: Animation = "none"
+    in_duration: float = Field(0.6, ge=0.0)
+    animate_out: Animation = "none"
+    out_duration: float = Field(0.6, ge=0.0)
+    easing: Easing = "ease_out"
+    slide_distance: float = 0.15
+    """Distancia de los deslizamientos, relativa al lado menor del lienzo."""
 
 
 class BarsLayer(LayerBase):
@@ -457,6 +481,7 @@ class ProjectConfig(StrictModel):
 
         self.audio.file = fix(self.audio.file)  # type: ignore[assignment]
         self.background.image = fix(self.background.image)
+        self.background.video = fix(self.background.video)
         for layer in self.layers:
             if isinstance(layer, ImageLayer):
                 layer.file = fix(layer.file)  # type: ignore[assignment]

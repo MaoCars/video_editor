@@ -29,6 +29,7 @@ from .recent import add_recent, clear_recent, load_recent, remove_recent
 PREVIEW_SCALES = {"Baja (480p)": 480 / 1080, "Media (540p)": 0.5, "Alta (720p)": 720 / 1080}
 AUDIO_TYPES = [("Audio", "*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.opus *.wma"), ("Todos", "*.*")]
 IMAGE_TYPES = [("Imágenes", "*.png *.jpg *.jpeg *.webp *.bmp"), ("Todos", "*.*")]
+VIDEO_TYPES = [("Videos", "*.mp4 *.mov *.mkv *.webm *.avi"), ("Todos", "*.*")]
 
 
 # --------------------------------------------------------------------------- utilidades
@@ -181,6 +182,8 @@ class ModelForm(ttk.Frame):
             path = filedialog.asksaveasfilename(parent=self, defaultextension=".mp4", filetypes=[("Video MP4", "*.mp4"), ("Todos", "*.*")])
         elif spec.name == "image":
             path = filedialog.askopenfilename(parent=self, filetypes=IMAGE_TYPES)
+        elif spec.name == "video":
+            path = filedialog.askopenfilename(parent=self, filetypes=VIDEO_TYPES)
         else:
             path = filedialog.askopenfilename(parent=self, filetypes=IMAGE_TYPES + AUDIO_TYPES)
         if path:

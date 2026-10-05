@@ -177,12 +177,54 @@ Cada efecto admite `intensity`, `threshold`, `start` y `end` (ventana en segundo
 
 ### Fondo (`background`)
 
-`type: solid | gradient | radial | image`, `colors`, `angle`, `image`, `image_fit`,
+`type: solid | gradient | radial | image | video`, `colors`, `angle`, `image`, `image_fit`,
 `blur`, `darken`, `pulse` (zoom con el kick), `react` (brillo con la energía), `react_trigger`.
+
+Con `type: video`: `video` (mp4, mov, webm...), `video_start` (segundo inicial), `video_loop` (repetir si es más
+corto que la canción; si no, se congela el último frame), `video_speed`. El audio del video se ignora. `blur`,
+`darken`, `pulse` y `react` se aplican igual que con una imagen. Decodificar video añade unos milisegundos por frame
+a cada proceso, así que el render es algo más lento que con imagen.
+
+```yaml
+background:
+  type: video
+  video: clips/fondo.mp4
+  video_loop: true
+  blur: 4
+  darken: 0.4
+```
 
 ### Capas (`layers`)
 
-Todas admiten `opacity`, `blend` (`normal | add | screen`), `position: [x, y]`, `glow`, `glow_radius`, `enabled`.
+Todas admiten `opacity`, `blend` (`normal | add | screen`), `position: [x, y]`, `glow`, `glow_radius`, `enabled`,
+y una **ventana temporal con animaciones**:
+
+| Campo | Significado |
+|---|---|
+| `start`, `end` | Segundo en que la capa aparece y desaparece (vacío = toda la canción) |
+| `animate_in`, `in_duration` | Animación de entrada y su duración: `fade`, `slide_left`, `slide_right`, `slide_up`, `slide_down`, `zoom_in`, `zoom_out`, `pop`, `blur` |
+| `animate_out`, `out_duration` | Igual para la salida |
+| `easing` | Curva: `linear`, `ease_in`, `ease_out`, `ease_in_out`, `back` (rebasa y vuelve), `bounce` |
+| `slide_distance` | Distancia de los deslizamientos (relativa al lado menor) |
+
+Texto e imagen soportan todas las animaciones; el resto de capas (barras, círculo, partículas...) usan fundido.
+Ejemplo: título que sube al segundo 2 y se desvanece en el 30, con el espectro apareciendo en el drop:
+
+```yaml
+layers:
+  - type: text
+    text: "Título"
+    start: 2
+    animate_in: slide_up
+    in_duration: 0.8
+    end: 30
+    animate_out: fade
+    out_duration: 1
+  - type: circle
+    start: 62          # el drop
+    animate_in: fade
+    in_duration: 0.3
+```
 En imágenes y textos, `position` es el punto donde se coloca el **anclaje** (`anchor` en imagen; `align` + `valign` en texto):
 por ejemplo `anchor: left` con `position: [0.05, 0.5]` pega la imagen al borde izquierdo, y `align: right`, `valign: bottom`,
 `position: [0.98, 0.97]` coloca un texto en la esquina inferior derecha.
