@@ -72,6 +72,107 @@ class ScrollFrame(ttk.Frame):
             child.destroy()
 
 
+def _swatch_color(value: str) -> Optional[str]:
+    """Hex #rrggbb para pintar una muestra, o None si no es un color válido."""
+    try:
+        from ..utils.color import parse_color
+
+        r, g, b, _ = parse_color(value)
+        return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+    except (ValueError, TypeError):
+        return None
+
+
+class ColorList(ttk.Frame):
+    """Editor de lista de colores: cuadro de texto + fila de muestras con botón para quitar cada color.
+
+    Clic en una muestra cambia ese color; «+» añade uno; «palette» sigue la paleta de la sección.
+    """
+
+    def __init__(self, master, colors: list[str], on_change: Callable[[list[str]], None]):
+        super().__init__(master)
+        self.on_change = on_change
+        self.var = tk.StringVar(value=", ".join(colors))
+        self.columnconfigure(0, weight=1)
+        self.entry = ttk.Entry(self, textvariable=self.var)
+        self.entry.grid(row=0, column=0, sticky="ew")
+        self.entry.bind("<Return>", lambda e: self._from_text())
+        self.entry.bind("<FocusOut>", lambda e: self._from_text())
+        self.row = ttk.Frame(self)
+        self.row.grid(row=1, column=0, sticky="w", pady=(2, 0))
+        self._render()
+
+    # -- estado
+    def get(self) -> list[str]:
+        return [p.strip() for p in self.var.get().replace(";", ",").split(",") if p.strip()]
+
+    def set(self, colors: list[str]) -> None:
+        self.var.set(", ".join(colors))
+        self._render()
+
+    def _emit(self, colors: list[str]) -> None:
+        self.var.set(", ".join(colors))
+        self._render()
+        self.on_change(colors)
+
+    def _from_text(self) -> None:
+        self._render()
+        self.on_change(self.get())
+
+    # -- muestras
+    def _render(self) -> None:
+        for child in self.row.winfo_children():
+            child.destroy()
+        colors = self.get()
+        for i, col in enumerate(colors):
+            chip = ttk.Frame(self.row, padding=(0, 0, 4, 0))
+            chip.pack(side="left")
+            hexcol = _swatch_color(col)
+            if col.lower() == "palette":
+                sw = tk.Label(chip, text="palette", font=("TkDefaultFont", 8), relief="groove", padx=3)
+            else:
+                sw = tk.Label(chip, width=3, bg=hexcol or "#888888", relief="solid", bd=1, cursor="hand2", text="" if hexcol else "?")
+            sw.pack(side="left")
+            sw.bind("<Button-1>", lambda e, k=i: self._edit(k))
+            tk.Button(chip, text="×", command=lambda k=i: self._remove(k), font=("TkDefaultFont", 8), bd=0, padx=2, cursor="hand2").pack(side="left")
+        ttk.Button(self.row, text="+", width=2, command=self._add).pack(side="left")
+        if len(colors) > 1:
+            ttk.Button(self.row, text="⇄", width=2, command=self._reverse).pack(side="left", padx=(4, 0))
+
+    def _pick(self, initial: Optional[str]) -> Optional[str]:
+        try:
+            _, hexcol = colorchooser.askcolor(color=initial, parent=self)
+        except tk.TclError:
+            _, hexcol = colorchooser.askcolor(parent=self)
+        return hexcol
+
+    def _add(self) -> None:
+        colors = self.get()
+        hexcol = self._pick(_swatch_color(colors[-1]) if colors else "#ffffff")
+        if hexcol:
+            self._emit([c for c in colors if c.lower() != "palette"] + [hexcol])
+
+    def _edit(self, k: int) -> None:
+        colors = self.get()
+        if k >= len(colors):
+            return
+        if colors[k].lower() == "palette":
+            return
+        hexcol = self._pick(_swatch_color(colors[k]))
+        if hexcol:
+            colors[k] = hexcol
+            self._emit(colors)
+
+    def _remove(self, k: int) -> None:
+        colors = self.get()
+        if k < len(colors):
+            del colors[k]
+            self._emit(colors)
+
+    def _reverse(self) -> None:
+        self._emit(list(reversed(self.get())))
+
+
 class ModelForm(ttk.Frame):
     """Formulario generado a partir de un modelo pydantic.
 
@@ -83,6 +184,7 @@ class ModelForm(ttk.Frame):
         self.model = model
         self.on_change = on_change
         self.status = status or (lambda s: None)
+        self._color_lists: dict[str, ColorList] = {}
         self.columnconfigure(1, weight=1)
         self._build(exclude)
 
@@ -119,6 +221,10 @@ class ModelForm(ttk.Frame):
                 w.bind("<Return>", lambda e, s=spec, v=var: self._commit(s, v.get()))
                 w.bind("<FocusOut>", lambda e, s=spec, v=var: self._commit(s, v.get()))
                 ttk.Button(self, text="…", width=3, command=lambda s=spec, v=var: self._pick_font_file(s, v)).grid(row=row, column=2, padx=2)
+            elif spec.kind == "colors":
+                widget = ColorList(self, list(value or []), lambda cols, s=spec: self._commit_colors(s, cols))
+                widget.grid(row=row, column=1, columnspan=2, sticky="ew", pady=(2, 4))
+                self._color_lists[spec.name] = widget
             else:
                 var = tk.StringVar(value=format_value(value, spec))
                 entry = ttk.Entry(self, textvariable=var, width=28)
@@ -126,9 +232,12 @@ class ModelForm(ttk.Frame):
                 entry.bind("<Return>", lambda e, s=spec, v=var, w=entry: self._commit(s, v.get(), w))
                 entry.bind("<FocusOut>", lambda e, s=spec, v=var, w=entry: self._commit(s, v.get(), w))
                 if spec.kind == "color":
-                    ttk.Button(self, text="…", width=3, command=lambda s=spec, v=var, w=entry: self._pick_color(s, v, w, replace=True)).grid(row=row, column=2, padx=2)
-                elif spec.kind == "colors":
-                    ttk.Button(self, text="+", width=3, command=lambda s=spec, v=var, w=entry: self._pick_color(s, v, w, replace=False)).grid(row=row, column=2, padx=2)
+                    side = ttk.Frame(self)
+                    side.grid(row=row, column=2, padx=2)
+                    swatch = tk.Label(side, width=2, bg=_swatch_color(str(value)) or "#888888", relief="solid", bd=1)
+                    swatch.pack(side="left", padx=(0, 2))
+                    var.trace_add("write", lambda *a, v=var, sw=swatch: sw.configure(bg=_swatch_color(v.get()) or "#888888"))
+                    ttk.Button(side, text="…", width=3, command=lambda s=spec, v=var, w=entry: self._pick_color(s, v, w, replace=True)).pack(side="left")
                 elif spec.kind == "file":
                     ttk.Button(self, text="…", width=3, command=lambda s=spec, v=var, w=entry: self._pick_file(s, v, w)).grid(row=row, column=2, padx=2)
             row += 1
@@ -155,6 +264,18 @@ class ModelForm(ttk.Frame):
             return
         self.model = new_model
         self.status("")
+        self.on_change(new_model)
+
+    def _commit_colors(self, spec: FieldSpec, colors: list[str]):
+        try:
+            new_model = apply_value(self.model, spec, ", ".join(colors))
+        except ValueError as exc:
+            self.status(f"{spec.label}: {exc}")
+            return
+        self.status("")
+        if new_model == self.model:
+            return
+        self.model = new_model
         self.on_change(new_model)
 
     def _pick_color(self, spec: FieldSpec, var: tk.StringVar, widget: tk.Widget, replace: bool):

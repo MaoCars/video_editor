@@ -74,6 +74,8 @@ musicviz gui mi_video.yaml   # abrir un proyecto existente
 - **Proyecto**: resolución, FPS, códec, análisis de audio (bandas, suavizado, sensibilidad de beats) y fondo.
 - **Capas / Efectos**: lista ordenable (añadir, duplicar, eliminar, subir/bajar) y un formulario con todas las
   opciones del elemento seleccionado; los campos inválidos se marcan en rojo y el motivo aparece en la barra de estado.
+  Los campos de colores muestran una fila de muestras: clic en una muestra para cambiarla, **×** para quitarla,
+  **+** para añadir con el selector de color y **⇄** para invertir el degradado.
 - **Vista previa**: se actualiza sola al cambiar cualquier valor (casilla *Auto*), con control de tiempo,
   calidad y botón *Reproducir* (con audio si instalaste `sounddevice`).
 - **Renderizar video**: render completo o un fragmento (*Desde* / *Duración* / *Escala*) con barra de progreso;

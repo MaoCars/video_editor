@@ -64,6 +64,32 @@ def test_gui_loads_previews_and_edits(app, tmp_path):
     assert app.project.layers[1].radius == 0.3
     assert _pump(app, lambda: app._photo is not None)
 
+    # editor de colores: quitar y añadir muestras sin pasar por el selector
+    from musicviz.gui.app import ColorList
+
+    def find_colorlist(widget):
+        if isinstance(widget, ColorList):
+            return widget
+        for child in widget.winfo_children():
+            found = find_colorlist(child)
+            if found is not None:
+                return found
+        return None
+
+    app.update()
+    cl = find_colorlist(app.layers_form.inner)
+    assert cl is not None and len(cl.get()) >= 2
+    n = len(cl.get())
+    cl._remove(0)
+    assert len(app.project.layers[1].colors) == n - 1
+    cl._emit(cl.get() + ["#123456"])
+    assert app.project.layers[1].colors[-1] == "#123456"
+    cl._reverse()
+    assert app.project.layers[1].colors[0] == "#123456"
+    cl.var.set("palette")
+    cl._from_text()
+    assert app.project.layers[1].colors == ["palette"]
+
     # reproducción durante un instante
     app._start_play()
     _pump(app, lambda: app.time_var.get() > 0.3, timeout=20)
