@@ -129,6 +129,8 @@ def detect_sections(features: AudioFeatures, cfg: AutoSectionsConfig) -> list[Se
 
 
 def resolve_sections(project: ProjectConfig, features: AudioFeatures) -> list[ResolvedSection]:
+    if not project.sections_enabled:
+        return []
     raw = detect_sections(features, project.auto_sections) if project.sections == "auto" else list(project.sections)
     raw = sorted(raw, key=lambda s: s.start)
     out: list[ResolvedSection] = []

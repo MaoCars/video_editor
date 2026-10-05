@@ -339,6 +339,8 @@ class App(tk.Tk):
         bar = ttk.Frame(tab, padding=4)
         bar.grid(row=0, column=0, sticky="ew")
         if kind == "sections":
+            self.sections_enabled_var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(bar, text="Usar secciones", variable=self.sections_enabled_var, command=self._toggle_sections).pack(side="left", padx=(0, 10))
             ttk.Button(bar, text="＋ Añadir sección", command=lambda: self._add_item("sections", SectionConfig)).pack(side="left")
             ttk.Button(bar, text="Detectar automáticamente", command=self._detect_sections).pack(side="left", padx=2)
             ttk.Button(bar, text="Modo auto", command=self._set_sections_auto).pack(side="left", padx=2)
@@ -402,6 +404,12 @@ class App(tk.Tk):
         self._refresh_list("sections", select=0)
         self._changed()
         self._set_status(f"{len(found)} secciones detectadas; edita paletas e intensidades a tu gusto")
+
+    def _toggle_sections(self):
+        self.project.sections_enabled = bool(self.sections_enabled_var.get())
+        self._refresh_list("sections")
+        self._changed()
+        self._set_status("Secciones activadas" if self.project.sections_enabled else "Secciones desactivadas: el diseño no cambia a lo largo de la canción (se conservan guardadas)")
 
     def _set_sections_auto(self):
         self.project.sections = "auto"
@@ -479,8 +487,12 @@ class App(tk.Tk):
         items = self._items(kind)
         cur = select if select is not None else (lb.curselection()[0] if lb.curselection() else 0)
         lb.delete(0, "end")
-        if kind == "sections" and self.project.sections == "auto":
-            lb.insert("end", "(automático: se detectan al renderizar; pulsa “Detectar” para editarlas)")
+        if kind == "sections":
+            self.sections_enabled_var.set(self.project.sections_enabled)
+            if not self.project.sections_enabled:
+                lb.insert("end", "(desactivadas: marca “Usar secciones” para aplicarlas)")
+            elif self.project.sections == "auto":
+                lb.insert("end", "(automático: se detectan al renderizar; pulsa “Detectar” para editarlas)")
         for i, item in enumerate(items):
             lb.insert("end", self._item_label(kind, i, item))
         if items:

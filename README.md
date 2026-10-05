@@ -292,6 +292,8 @@ effects:
   se interpola durante `transition`.
 - `sections: [nombres]` en una capa o efecto lo limita a esas secciones. `name` permite nombrar capas y
   efectos para referirse a ellos.
+- **Interruptor**: `sections_enabled: false` (casilla *Usar secciones* en la GUI) ignora las secciones sin borrarlas,
+  para alternar entre un video con cambios de color y otro con el mismo color toda la canción.
 - **Detección automática**: `sections: auto` clasifica la canción en `calm`, `build` y `drop` a partir de la
   energía; las paletas e intensidades de cada tipo se ajustan en `auto_sections`. `musicviz sections cancion.mp3`
   imprime los tramos detectados en YAML para pegarlos y retocarlos. En la GUI, pestaña *Secciones* → *Detectar

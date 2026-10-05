@@ -136,6 +136,7 @@ LABELS: dict[str, str] = {
     "name": "Nombre",
     "transparent": "Fondo transparente",
     "sections": "Sólo en secciones",
+    "sections_enabled": "Usar secciones",
     "palette": "Paleta",
     "background_colors": "Colores del fondo",
     "transition": "Transición (s)",

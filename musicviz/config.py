@@ -531,6 +531,8 @@ class ProjectConfig(StrictModel):
     effects: List[EffectConfig] = []
     sections: Union[Literal["auto"], List[SectionConfig]] = []
     """Lista de tramos con su diseño, o "auto" para detectarlos a partir de la energía de la canción."""
+    sections_enabled: bool = True
+    """Interruptor: con False las secciones se conservan en el proyecto pero se ignoran (mismo color toda la canción)."""
     auto_sections: AutoSectionsConfig = AutoSectionsConfig()
 
     @classmethod

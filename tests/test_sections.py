@@ -128,3 +128,13 @@ def test_section_config_validation():
         SectionConfig(start=0, palette=["rojo"])
     s = SectionConfig(name="x", start=10)
     assert s.end is None and s.transition == 0.5
+
+
+def test_sections_switch(audio_cfg, features):
+    layers = [{"type": "bars", "colors": ["palette"], "height": 0.45, "width": 0.3, "min_height": 0.4, "mirror": True, "gap": 0.0, "glow": 0}]
+    sections = [{"name": "rojo", "start": 0, "palette": ["#ff0000"], "transition": 0}]
+    on = _project(audio_cfg, background={"type": "solid", "color": "#000000"}, layers=layers, sections=sections)
+    off = _project(audio_cfg, background={"type": "solid", "color": "#000000"}, layers=layers, sections=sections, sections_enabled=False)
+    assert _center(Scene(on, features, W, H).render(30))[0] > 200 and _center(Scene(on, features, W, H).render(30))[2] < 30
+    assert _center(Scene(off, features, W, H).render(30)).min() > 200  # desactivadas: blanco, pero siguen guardadas
+    assert off.sections and not resolve_sections(off, features)
