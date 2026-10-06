@@ -25,6 +25,7 @@ from ..presets import load_preset, preset_names
 from ..render.canvas import over_checkerboard
 from .fields import FieldSpec, apply_value, field_specs, format_value, replace_submodel
 from .recent import add_recent, clear_recent, load_recent, remove_recent
+from .timeline import Timeline
 
 PREVIEW_SCALES = {"Baja (480p)": 480 / 1080, "Media (540p)": 0.5, "Alta (720p)": 720 / 1080}
 AUDIO_TYPES = [("Audio", "*.mp3 *.wav *.flac *.ogg *.m4a *.aac *.opus *.wma"), ("Todos", "*.*")]
@@ -341,7 +342,7 @@ class App(tk.Tk):
     def __init__(self, project_path: Optional[str] = None):
         super().__init__()
         self.title("musicviz — Music Visualizer")
-        self.geometry("1380x840")
+        self.geometry("1380x900")
         self.minsize(1100, 700)
         style = ttk.Style(self)
         style.configure("Error.TEntry", fieldbackground="#ffd6d6")
@@ -455,6 +456,15 @@ class App(tk.Tk):
         cb = ttk.Combobox(ctl, textvariable=self.scale_var, values=list(PREVIEW_SCALES), state="readonly", width=13)
         cb.pack(side="left")
         cb.bind("<<ComboboxSelected>>", lambda e: self._request_preview(force=True))
+
+        tl_bar = ttk.Frame(right)
+        tl_bar.pack(fill="x")
+        self.timeline_visible = tk.BooleanVar(value=True)
+        self.timeline_btn = ttk.Checkbutton(tl_bar, text="Timeline", variable=self.timeline_visible, command=self._toggle_timeline, style="Toolbutton")
+        self.timeline_btn.pack(side="left")
+        ttk.Label(tl_bar, text="clic: ir · arrastrar barra: mover · bordes: inicio/fin · rueda: zoom · Shift+rueda: desplazar", foreground="#777", font=("TkDefaultFont", 8)).pack(side="left", padx=10)
+        self.timeline = Timeline(right, on_seek=self._tl_seek, on_select=self._tl_select, on_change=self._tl_change, on_section_change=self._tl_section_change)
+        self.timeline.pack(fill="x", pady=(2, 0))
 
         bottom = ttk.Frame(self, padding=(8, 4))
         bottom.pack(fill="x")
@@ -584,6 +594,7 @@ class App(tk.Tk):
         self._refresh_list("effects")
         self._refresh_list("sections")
         self._update_title()
+        self._refresh_timeline()
         self._request_preview()
 
     def _build_project_tab(self):
@@ -612,6 +623,7 @@ class App(tk.Tk):
 
     def _changed(self):
         self._mark_dirty()
+        self._refresh_timeline()
         self._request_preview()
 
     def _on_paths_changed(self):
@@ -648,6 +660,9 @@ class App(tk.Tk):
         lb: tk.Listbox = getattr(self, f"{kind}_list")
         form: ScrollFrame = getattr(self, f"{kind}_form")
         form.clear()
+        if kind in ("layers", "effects") and hasattr(self, "timeline") and lb.curselection():
+            if self.timeline.selected != (kind, lb.curselection()[0]):
+                self.timeline.set_selected(kind, lb.curselection()[0])
         items = self._items(kind)
         if not lb.curselection() or not items:
             ttk.Label(form.inner, text="Añade un elemento con el botón ＋", padding=10).pack()
@@ -725,6 +740,56 @@ class App(tk.Tk):
             items[idx], items[j] = items[j], items[idx]
             self._refresh_list(kind, select=j)
             self._changed()
+
+    # ------------------------------------------------------------------ timeline
+    def _toggle_timeline(self):
+        if self.timeline_visible.get():
+            self.timeline.pack(fill="x", pady=(2, 0))
+            self._refresh_timeline()
+        else:
+            self.timeline.pack_forget()
+
+    def _refresh_timeline(self):
+        if self.timeline_visible.get():
+            self.timeline.set_data(self.project, self._features)
+            self.timeline.set_time(float(self.time_var.get()))
+
+    def _tl_seek(self, t: float):
+        self.time_var.set(t)
+        self._update_time_label()
+        if not self._playing:
+            self._request_preview(force=True)
+
+    def _tl_select(self, kind: str, idx: int):
+        self.nb.select(1 if kind == "layers" else 2)
+        lb: tk.Listbox = getattr(self, f"{kind}_list")
+        lb.selection_clear(0, "end")
+        lb.selection_set(idx)
+        lb.see(idx)
+        self._show_item_form(kind)
+        self.timeline.set_selected(kind, idx)
+
+    def _tl_change(self, kind: str, idx: int, start, end):
+        items = self._items(kind)
+        if idx >= len(items):
+            return
+        try:
+            items[idx] = items[idx].model_copy(update={"start": start, "end": end})
+        except Exception as exc:  # noqa: BLE001
+            self._set_status(f"Tiempo inválido: {exc}")
+            return
+        self._refresh_list(kind, select=idx)
+        self._changed()
+
+    def _tl_section_change(self, idx: int, new_start: float):
+        secs = self.project.sections
+        if isinstance(secs, str) or idx <= 0 or idx >= len(secs):
+            return
+        secs[idx] = secs[idx].model_copy(update={"start": new_start})
+        if secs[idx - 1].end is not None:
+            secs[idx - 1] = secs[idx - 1].model_copy(update={"end": new_start})
+        self._refresh_list("sections", select=idx)
+        self._changed()
 
     # ------------------------------------------------------------------ recientes
     def _refresh_recent_menu(self):
@@ -916,6 +981,8 @@ class App(tk.Tk):
 
     def _update_time_label(self):
         total = self._features.duration if self._features else 0.0
+        if self.timeline_visible.get():
+            self.timeline.set_time(float(self.time_var.get()))
         label = f"{_fmt(self.time_var.get())} / {_fmt(total)}"
         if self._features is not None and self.project.sections:
             try:
@@ -1054,6 +1121,7 @@ class App(tk.Tk):
                 elif kind == "features":
                     self.time_scale.configure(to=max(payload.duration, 0.1))
                     self._update_time_label()
+                    self._refresh_timeline()
                     self._set_status(f"Audio: {payload.duration:.1f}s · BPM≈{payload.bpm:.0f} · {int(payload.beats.sum())} beats · {int(payload.kick_onsets.sum())} kicks")
                 elif kind == "preview":
                     self._show_image(payload)

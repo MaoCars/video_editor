@@ -90,6 +90,37 @@ def test_gui_loads_previews_and_edits(app, tmp_path):
     cl._from_text()
     assert app.project.layers[1].colors == ["palette"]
 
+    # timeline: saltar, seleccionar, arrastrar bordes y mover
+    from types import SimpleNamespace
+
+    tl = app.timeline
+    app.update()
+    assert tl.project is app.project and tl.features is not None and tl._rows
+    x_mid = tl._t2x(tl.duration / 2)
+    tl._on_press(SimpleNamespace(x=x_mid, y=5))
+    tl._on_release(SimpleNamespace(x=x_mid, y=5))
+    assert abs(app.time_var.get() - tl.duration / 2) < 0.1
+    row_y = 18 + 46 + 16 + 20 * 2 + 10  # tercera fila (texto)
+    app.project.layers[2] = app.project.layers[2].model_copy(update={"start": 1.0, "end": 4.0})
+    app._refresh_timeline()
+    xa = tl._t2x(4.0)
+    tl._on_press(SimpleNamespace(x=xa, y=row_y))  # borde final
+    assert tl._drag and tl._drag["what"] == "edge_end" and tl.selected == ("layers", 2)
+    tl._on_drag(SimpleNamespace(x=tl._t2x(5.0), y=row_y))
+    tl._on_release(SimpleNamespace(x=tl._t2x(5.0), y=row_y))
+    assert abs(app.project.layers[2].end - 5.0) < 0.1
+    xm = tl._t2x(3.0)
+    tl._on_press(SimpleNamespace(x=xm, y=row_y))  # mover
+    tl._on_drag(SimpleNamespace(x=tl._t2x(3.5), y=row_y))
+    tl._on_release(SimpleNamespace(x=tl._t2x(3.5), y=row_y))
+    assert abs(app.project.layers[2].start - 1.5) < 0.1 and abs(app.project.layers[2].end - 5.5) < 0.1
+    tl._on_wheel(SimpleNamespace(x=x_mid, y=row_y, delta=120, num=None))  # zoom
+    assert tl.view1 - tl.view0 < tl.duration
+    app.timeline_visible.set(False)
+    app._toggle_timeline()
+    app.timeline_visible.set(True)
+    app._toggle_timeline()
+
     # reproducción durante un instante
     app._start_play()
     _pump(app, lambda: app.time_var.get() > 0.3, timeout=20)

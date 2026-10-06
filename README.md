@@ -78,6 +78,11 @@ musicviz gui mi_video.yaml   # abrir un proyecto existente
   **+** para añadir con el selector de color y **⇄** para invertir el degradado.
 - **Vista previa**: se actualiza sola al cambiar cualquier valor (casilla *Auto*), con control de tiempo,
   calidad y botón *Reproducir* (con audio si instalaste `sounddevice`).
+- **Timeline** (panel plegable bajo la vista previa): forma de onda con beats y kicks, secciones coloreadas,
+  y una fila por capa y por efecto con su ventana de tiempo, las animaciones de entrada/salida sombreadas y
+  atenuados los tramos donde la sección no los permite. Clic en el audio para saltar, clic en una barra para
+  seleccionar ese elemento, arrastrar sus bordes para cambiar inicio y fin, arrastrarla entera para moverla,
+  arrastrar el límite entre dos secciones para ajustarlo, rueda para hacer zoom y Shift+rueda para desplazarse.
 - **Renderizar video**: render completo o un fragmento (*Desde* / *Duración* / *Escala*) con barra de progreso;
   la ventana sigue usable mientras tanto y el botón *Cancelar* detiene el render y borra el archivo parcial.
 - *Archivo → Guardar* escribe el YAML, que también puedes editar a mano o usar con la línea de comandos.
