@@ -8,6 +8,7 @@ from ..config import PALETTE
 from ..render.canvas import Canvas, RenderContext
 from ..utils.color import gradient, gradient_from_stops, lut_to_int
 from .animation import AnimState, anim_state
+from .keyframes import KeyState, key_state
 
 C = TypeVar("C", bound=LayerBase)
 
@@ -24,6 +25,7 @@ class Layer(Generic[C]):
         self.ctx = ctx
         self.duration = features.duration
         self._anim = AnimState()
+        self._keys = KeyState()
         self._intensity = 1.0
         self._lut_key: bytes | None = None
         self._lut_dyn: tuple | None = None
@@ -55,8 +57,9 @@ class Layer(Generic[C]):
         """Calcula el estado de animación del frame. Devuelve False si la capa no se dibuja."""
         assert self.ctx is not None
         self._anim = anim_state(self.cfg, frame.time, self.duration, self.ctx.min_dim)
+        self._keys = key_state(self.cfg, frame.time)
         self._intensity = float(frame.intensity)
-        return self._anim.visible
+        return self._anim.visible and self._keys.opacity > 0.001
 
     @property
     def anim(self) -> AnimState:
@@ -67,6 +70,16 @@ class Layer(Generic[C]):
         """Intensidad de la sección activa (1 = normal)."""
         return self._intensity
 
+    @property
+    def keys(self) -> KeyState:
+        return self._keys
+
+    def key_position(self) -> tuple[float, float]:
+        """Posición en píxeles del punto de anclaje para este frame (keyframes o posición fija)."""
+        assert self.ctx is not None
+        pos = self._keys.position if self._keys.position is not None else tuple(self.cfg.position)
+        return self.ctx.rel(pos)
+
     # Ayudas comunes -------------------------------------------------------
     def composite(self, canvas: Canvas, layer, glow: float | None = None) -> None:
         cfg = self.cfg
@@ -74,7 +87,7 @@ class Layer(Generic[C]):
         assert ctx is not None
         canvas.composite(
             layer,
-            opacity=cfg.opacity * self._anim.alpha,
+            opacity=cfg.opacity * self._anim.alpha * self._keys.opacity,
             blend=cfg.blend,
             glow=(cfg.glow if glow is None else glow) * self._intensity,
             glow_radius=ctx.px(cfg.glow_radius),

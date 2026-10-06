@@ -138,6 +138,25 @@ Animation = Literal["none", "fade", "slide_left", "slide_right", "slide_up", "sl
 Easing = Literal["linear", "ease_in", "ease_out", "ease_in_out", "back", "bounce"]
 
 
+class ScalarKey(StrictModel):
+    """Keyframe de un valor numérico. `easing` es la curva con la que se llega a este keyframe desde el anterior."""
+
+    time: float = Field(0.0, ge=0.0)
+    value: float = 1.0
+    easing: Easing = "ease_in_out"
+
+
+class PointKey(StrictModel):
+    """Keyframe de posición (x, y relativos al lienzo)."""
+
+    time: float = Field(0.0, ge=0.0)
+    value: Tuple[float, float] = (0.5, 0.5)
+    easing: Easing = "ease_in_out"
+
+
+KEYFRAME_PROPS = ("position", "scale", "opacity", "rotation")
+
+
 class LayerBase(StrictModel):
     """Campos comunes. `start`/`end` limitan cuándo existe la capa (segundos; None = toda la canción) y
     `animate_in`/`animate_out` definen cómo aparece y desaparece. Texto e imagen soportan todas las
@@ -162,6 +181,14 @@ class LayerBase(StrictModel):
     easing: Easing = "ease_out"
     slide_distance: float = 0.15
     """Distancia de los deslizamientos, relativa al lado menor del lienzo."""
+    position_keys: List[PointKey] = []
+    """Keyframes de posición (sustituyen a `position` mientras existan)."""
+    scale_keys: List[ScalarKey] = []
+    """Keyframes de escala (1 = tamaño configurado). Texto, imagen, círculo y barras."""
+    opacity_keys: List[ScalarKey] = []
+    """Keyframes de opacidad (0..1), se multiplican con `opacity`. Todas las capas."""
+    rotation_keys: List[ScalarKey] = []
+    """Keyframes de rotación en grados (se suman a la rotación propia). Texto, imagen y círculo."""
 
 
 class BarsLayer(LayerBase):

@@ -144,6 +144,8 @@ LABELS: dict[str, str] = {
     "shake_trigger": "Disparador vibración",
     "shake_rotation": "Giro vibración (°)",
     "min_length": "Duración mínima (s)",
+    "time": "Tiempo (s)",
+    "value": "Valor",
     "palettes": "Paletas por tipo",
     "intensities": "Intensidades por tipo",
     "animate_in": "Animación entrada",
@@ -230,6 +232,8 @@ def field_specs(model_cls: type[BaseModel], exclude: tuple[str, ...] = ()) -> li
                 specs.append(FieldSpec(name, "file", optional))
             else:
                 specs.append(FieldSpec(name, "str", optional))
+        elif origin in (list, typing.List) and get_args(ann) and isinstance(get_args(ann)[0], type) and issubclass(get_args(ann)[0], BaseModel):
+            continue  # listas de keyframes: se editan en el panel de keyframes / timeline
         elif origin in (list, typing.List) and get_args(ann) and get_args(ann)[0] is str:
             specs.append(FieldSpec(name, "strlist" if name in ("effects", "layers", "sections") else "colors", optional))
         elif origin in (tuple, typing.Tuple):

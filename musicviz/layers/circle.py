@@ -73,11 +73,12 @@ class CircleSpectrum(Layer[CircleLayer]):
         cfg = self.cfg
         self.colors_lut, self.lut_int = self.luts(frame)
         self.ring_color = self._ring_fixed or to_cv(self.colors_lut[0])
+        self.cx, self.cy = self.key_position()
         layer = canvas.new_layer()
         values = self._values(frame)
         vals = values.tolist()
-        pulse = 1.0 + cfg.pulse * self.intensity * frame.drive(cfg.pulse_trigger)
-        rot = math.radians(cfg.rotation + cfg.rotation_speed * frame.time)
+        pulse = (1.0 + cfg.pulse * self.intensity * frame.drive(cfg.pulse_trigger)) * max(self.keys.scale, 0.0)
+        rot = math.radians(cfg.rotation + cfg.rotation_speed * frame.time + self.keys.rotation)
         for ring_i in range(cfg.rings):
             spread = 1.0 + ring_i * cfg.ring_spread
             r0 = self.base_r * pulse * spread
@@ -85,7 +86,7 @@ class CircleSpectrum(Layer[CircleLayer]):
             fade = 1.0 / (1.0 + ring_i * 0.6)
             ang = self.angles + ring_rot
             cos, sin = np.cos(ang), np.sin(ang)
-            lens = values * self.max_len * (1.0 - 0.25 * ring_i)
+            lens = values * self.max_len * (1.0 - 0.25 * ring_i) * max(self.keys.scale, 0.0)
             x_in = self.cx + cos * (r0 - (lens if cfg.inner else 0.0))
             y_in = self.cy + sin * (r0 - (lens if cfg.inner else 0.0))
             x_out = self.cx + cos * (r0 + lens)

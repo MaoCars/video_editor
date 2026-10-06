@@ -114,6 +114,24 @@ def test_gui_loads_previews_and_edits(app, tmp_path):
     tl._on_drag(SimpleNamespace(x=tl._t2x(3.5), y=row_y))
     tl._on_release(SimpleNamespace(x=tl._t2x(3.5), y=row_y))
     assert abs(app.project.layers[2].start - 1.5) < 0.1 and abs(app.project.layers[2].end - 5.5) < 0.1
+    # keyframes: añadir sin diálogo (directo al modelo), sub-fila en la timeline, mover y borrar
+    from musicviz.config import ScalarKey
+
+    app._set_keys(2, "opacity", [ScalarKey(time=1.0, value=1.0), ScalarKey(time=3.0, value=0.2)])
+    app.update()
+    key_rows = [r for r in tl._rows if r["kind"] == "keys"]
+    assert len(key_rows) == 1 and key_rows[0]["prop"] == "opacity"
+    ky = 18 + 46 + 16 + 20 * tl._rows.index(key_rows[0]) + 10
+    kx = tl._t2x(3.0)
+    hit = tl._hit(kx, ky)
+    assert hit and hit["what"] == "key" and hit["k"] == 1
+    tl._on_press(SimpleNamespace(x=kx, y=ky))
+    tl._on_drag(SimpleNamespace(x=tl._t2x(4.0), y=ky))
+    tl._on_release(SimpleNamespace(x=tl._t2x(4.0), y=ky))
+    assert abs(app.project.layers[2].opacity_keys[1].time - 4.0) < 0.1
+    tl._on_right(SimpleNamespace(x=tl._t2x(4.0), y=ky))
+    assert len(app.project.layers[2].opacity_keys) == 1
+    assert app.project.layers[2].opacity_keys[0].time == 1.0
     tl._on_wheel(SimpleNamespace(x=x_mid, y=row_y, delta=120, num=None))  # zoom
     assert tl.view1 - tl.view0 < tl.duration
     app.timeline_visible.set(False)

@@ -37,13 +37,14 @@ class Bars(Layer[BarsLayer]):
         cfg = self.cfg
         self.n = cfg.bands or features.spectrum.shape[1]
         self.colors_lut = self._lut_static[0]
-        area_w = cfg.width * ctx.width
-        self.slot = area_w / self.n
+        self.area_w = cfg.width * ctx.width
+        self.slot = self.area_w / self.n
         self.bar_w = max(self.slot * (1.0 - cfg.gap), 1.0)
         cx, cy = ctx.rel(cfg.position)
-        self.x0 = cx - area_w / 2.0
+        self.x0 = cx - self.area_w / 2.0
         self.cy = cy
-        self.max_h = cfg.height * ctx.height
+        self.base_max_h = cfg.height * ctx.height
+        self.max_h = self.base_max_h
         self.seg_h = max(ctx.px(cfg.segment_height), 2.0)
 
     def _color(self, i: int, value: float) -> tuple[int, int, int, int]:
@@ -54,6 +55,9 @@ class Bars(Layer[BarsLayer]):
         assert self.ctx is not None
         cfg = self.cfg
         self.colors_lut = self.luts(frame)[0]
+        cx, self.cy = self.key_position()
+        self.x0 = cx - self.area_w / 2.0
+        self.max_h = self.base_max_h * max(self.keys.scale, 0.0)
         layer = canvas.new_layer()
         values = build_values(frame.spectrum, self.n, cfg.symmetric)
         if cfg.bass_boost > 0:

@@ -201,17 +201,33 @@ class TextOverlay(Layer[TextLayer]):
         assert self.ctx is not None
         cfg = self.cfg
         anim = self.anim
-        scale = self.base_scale * (1.0 + cfg.pulse * frame.drive(cfg.pulse_trigger)) * anim.scale
+        keys = self.keys
+        scale = self.base_scale * (1.0 + cfg.pulse * frame.drive(cfg.pulse_trigger)) * anim.scale * max(keys.scale, 0.0)
         sh, sw = self.sprite.shape[:2]
         w, h = max(int(sw * scale), 1), max(int(sh * scale), 1)
         sprite = cv2.resize(self.sprite, (w, h), interpolation=cv2.INTER_AREA)
         if anim.blur > 0:
             sprite = cv2.GaussianBlur(sprite, (0, 0), max(anim.blur * self.ctx.px(14), 0.3))
-        cx, cy = anchor_center(self.x + anim.dx, self.y + anim.dy, w, h, self.anchor)
+        x, y = self.key_position()
+        cx, cy = anchor_center(x + anim.dx, y + anim.dy, w, h, self.anchor)
         layer = canvas.new_layer()
         if self.shadow_sprite is not None:
             ssh, ssw = self.shadow_sprite.shape[:2]
             shadow = cv2.resize(self.shadow_sprite, (max(int(ssw * scale), 1), max(int(ssh * scale), 1)), interpolation=cv2.INTER_AREA)
+            if abs(keys.rotation) > 1e-3:
+                shadow = rotate_rgba(shadow, keys.rotation)
             paste_rgba(layer, shadow, cx + self.ctx.px(cfg.shadow_offset[0]), cy + self.ctx.px(cfg.shadow_offset[1]))
+        if abs(keys.rotation) > 1e-3:
+            sprite = rotate_rgba(sprite, keys.rotation)
         paste_rgba(layer, sprite, cx, cy)
         self.composite(canvas, layer)
+
+
+def rotate_rgba(sprite: np.ndarray, angle: float) -> np.ndarray:
+    """Gira un sprite RGBA alrededor de su centro ampliando el lienzo para no recortarlo."""
+    sh, sw = sprite.shape[:2]
+    diag = int(np.ceil(np.hypot(sh, sw))) + 2
+    M = cv2.getRotationMatrix2D((sw / 2, sh / 2), -angle, 1.0)
+    M[0, 2] += diag / 2 - sw / 2
+    M[1, 2] += diag / 2 - sh / 2
+    return cv2.warpAffine(sprite, M, (diag, diag), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))

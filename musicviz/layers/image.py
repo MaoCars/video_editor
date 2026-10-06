@@ -97,13 +97,15 @@ class ImageOverlay(Layer[ImageLayer]):
         assert self.ctx is not None
         cfg = self.cfg
         anim = self.anim
-        scale = self.base_scale * (1.0 + cfg.pulse * frame.drive(cfg.pulse_trigger)) * anim.scale
-        angle = cfg.rotation + cfg.rotation_speed * frame.time
+        keys = self.keys
+        scale = self.base_scale * (1.0 + cfg.pulse * frame.drive(cfg.pulse_trigger)) * anim.scale * max(keys.scale, 0.0)
+        angle = cfg.rotation + cfg.rotation_speed * frame.time + keys.rotation
         sprite = self._transform(self.sprite, scale, angle)
         if anim.blur > 0:
             sprite = cv2.GaussianBlur(sprite, (0, 0), max(anim.blur * self.ctx.px(20), 0.3))
         sh, sw = sprite.shape[:2]
-        x, y = self.x + anim.dx, self.y + anim.dy
+        kx, ky = self.key_position()
+        x, y = kx + anim.dx, ky + anim.dy
         if cfg.shake > 0:
             rng = np.random.default_rng(99 + frame.index)
             k = frame.kick * cfg.shake * self.ctx.scale

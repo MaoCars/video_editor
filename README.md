@@ -184,6 +184,45 @@ disparador que toma un valor 0..1 por frame a partir del audio:
 
 Cada efecto admite `intensity`, `threshold`, `start` y `end` (ventana en segundos).
 
+### Keyframes: posición, escala, opacidad y rotación
+
+Además de las animaciones de entrada/salida, cualquier capa puede llevar keyframes en cuatro propiedades.
+Entre dos keyframes el valor se interpola con la curva del keyframe de llegada (`linear`, `ease_in`,
+`ease_out`, `ease_in_out`, `back`, `bounce`); antes del primero vale el primero y después del último, el último.
+Se combinan con lo demás: la posición sustituye a `position`, la escala y la opacidad se multiplican con el
+pulso, las animaciones y la opacidad de la capa, y la rotación se suma a la propia.
+
+```yaml
+layers:
+  - type: image
+    file: logo.png
+    position_keys:                      # el logo cruza de izquierda a derecha entre el s 10 y el 14
+      - {time: 10, value: [0.2, 0.5]}
+      - {time: 14, value: [0.8, 0.5], easing: ease_in_out}
+    scale_keys:
+      - {time: 10, value: 0.6}
+      - {time: 14, value: 1.0, easing: back}
+    rotation_keys:
+      - {time: 10, value: -15}
+      - {time: 14, value: 0}
+  - type: circle
+    opacity_keys:                       # el espectro se funde entre el s 60 y el 62
+      - {time: 60, value: 1}
+      - {time: 62, value: 0, easing: linear}
+```
+
+| Propiedad | Capas que la aplican |
+|---|---|
+| `position_keys` | texto, imagen, círculo, barras, forma de onda |
+| `scale_keys` | texto, imagen, círculo (radio y longitud), barras (altura), forma de onda (amplitud) |
+| `opacity_keys` | todas |
+| `rotation_keys` | texto, imagen, círculo |
+
+En la GUI: en el formulario de la capa, bloque *Keyframes* → **＋ en el cursor** crea uno en el tiempo actual con el
+valor actual (se abre un diálogo para ajustar valor y curva). En la timeline aparece una sub-fila por propiedad con
+rombos: arrastrar para mover en el tiempo, doble clic para editar, clic derecho para borrar, doble clic en la fila
+vacía para añadir en ese instante.
+
 ### Fondo (`background`)
 
 `type: solid | gradient | radial | image | video`, `colors`, `angle`, `image`, `image_fit`,

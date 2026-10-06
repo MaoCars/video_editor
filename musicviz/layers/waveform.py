@@ -40,13 +40,15 @@ class Waveform(Layer[WaveformLayer]):
         assert self.ctx is not None
         cfg = self.cfg
         self.colors_lut = self.luts(frame)[0]
+        self.cx, self.cy = self.key_position()
         layer = canvas.new_layer()
         s = self._samples(frame)
         n = len(s)
+        amp = self.amp * max(self.keys.scale, 0.0)
         if cfg.style == "circular":
             r = cfg.radius * self.ctx.min_dim
             ang = np.linspace(0, 2 * math.pi, n, endpoint=False)
-            rr = r + s * self.amp
+            rr = r + s * amp
             xs = self.cx + np.cos(ang) * rr
             ys = self.cy + np.sin(ang) * rr
             pts = np.stack([xs, ys], axis=1).astype(np.int32).reshape(-1, 1, 2)
@@ -55,18 +57,18 @@ class Waveform(Layer[WaveformLayer]):
             return
 
         xs = self.cx - self.area_w / 2 + np.linspace(0, self.area_w, n)
-        ys = self.cy - s * self.amp
+        ys = self.cy - s * amp
         if cfg.style == "bars":
             step = self.area_w / n
             bw = max(int(step * 0.6), 1)
             for i in range(n):
                 col = to_cv(self.colors_lut[int(i / max(n - 1, 1) * 255)])
-                h = abs(float(s[i])) * self.amp
+                h = abs(float(s[i])) * amp
                 x = int(round(xs[i]))
                 cv2.rectangle(layer, (x - bw // 2, int(round(self.cy - h))), (x + bw // 2, int(round(self.cy + h))), col, -1)
         elif cfg.style == "filled":
             top = np.stack([xs, ys], axis=1)
-            base_y = (self.cy + s * self.amp) if cfg.mirror else np.full(n, self.cy)
+            base_y = (self.cy + s * amp) if cfg.mirror else np.full(n, self.cy)
             bottom = np.stack([xs[::-1], base_y[::-1]], axis=1)
             poly = np.concatenate([top, bottom]).astype(np.int32).reshape(-1, 1, 2)
             cv2.fillPoly(layer, [poly], to_cv(self.colors_lut[128], 0.85), cv2.LINE_AA)
@@ -80,6 +82,6 @@ class Waveform(Layer[WaveformLayer]):
             else:
                 cv2.polylines(layer, [pts], False, to_cv(self.colors_lut[0]), self.thick, cv2.LINE_AA)
             if cfg.mirror:
-                pts2 = np.stack([xs, self.cy + s * self.amp], axis=1).astype(np.int32).reshape(-1, 1, 2)
+                pts2 = np.stack([xs, self.cy + s * amp], axis=1).astype(np.int32).reshape(-1, 1, 2)
                 cv2.polylines(layer, [pts2], False, to_cv(self.colors_lut[-1]), self.thick, cv2.LINE_AA)
         self.composite(canvas, layer)

@@ -19,7 +19,8 @@ from PIL import Image, ImageTk
 from pydantic import BaseModel
 
 from ..audio.analysis import AudioFeatures
-from ..config import EffectConfig, LayerConfig, ProjectConfig, SectionConfig, get_args_of_union
+from ..config import KEYFRAME_PROPS, EffectConfig, LayerConfig, PointKey, ProjectConfig, ScalarKey, SectionConfig, get_args_of_union
+from ..layers.keyframes import current_value
 from ..layers.text import available_fonts
 from ..presets import load_preset, preset_names
 from ..render.canvas import over_checkerboard
@@ -463,7 +464,10 @@ class App(tk.Tk):
         self.timeline_btn = ttk.Checkbutton(tl_bar, text="Timeline", variable=self.timeline_visible, command=self._toggle_timeline, style="Toolbutton")
         self.timeline_btn.pack(side="left")
         ttk.Label(tl_bar, text="clic: ir · arrastrar barra: mover · bordes: inicio/fin · rueda: zoom · Shift+rueda: desplazar", foreground="#777", font=("TkDefaultFont", 8)).pack(side="left", padx=10)
-        self.timeline = Timeline(right, on_seek=self._tl_seek, on_select=self._tl_select, on_change=self._tl_change, on_section_change=self._tl_section_change)
+        self.timeline = Timeline(
+            right, on_seek=self._tl_seek, on_select=self._tl_select, on_change=self._tl_change, on_section_change=self._tl_section_change,
+            on_key_move=self._key_move, on_key_edit=self._key_edit, on_key_add=self._key_add, on_key_delete=self._key_delete,
+        )
         self.timeline.pack(fill="x", pady=(2, 0))
 
         bottom = ttk.Frame(self, padding=(8, 4))
@@ -669,6 +673,72 @@ class App(tk.Tk):
             return
         idx = lb.curselection()[0]
         ModelForm(form.inner, items[idx], lambda m, k=kind, i=idx: self._set_item(k, i, m), status=self._set_status).pack(fill="x", padx=4, pady=4)
+        if kind == "layers":
+            self._build_keyframe_panel(form.inner, idx)
+
+    # ------------------------------------------------------------------ keyframes
+    def _build_keyframe_panel(self, parent, idx: int):
+        box = ttk.LabelFrame(parent, text="Keyframes (posición, escala, opacidad, rotación)", padding=4)
+        box.pack(fill="x", padx=4, pady=(0, 8))
+        box.columnconfigure(1, weight=1)
+        layer = self.project.layers[idx]
+        labels = {"position": "Posición", "scale": "Escala", "opacity": "Opacidad", "rotation": "Rotación"}
+        for r, prop in enumerate(KEYFRAME_PROPS):
+            keys = getattr(layer, f"{prop}_keys")
+            ttk.Label(box, text=labels[prop]).grid(row=r, column=0, sticky="w", padx=(2, 8))
+            ttk.Label(box, text=f"{len(keys)} keyframe{'s' if len(keys) != 1 else ''}", foreground="#555").grid(row=r, column=1, sticky="w")
+            ttk.Button(box, text="＋ en el cursor", command=lambda p=prop, i=idx: self._key_add(i, p, round(float(self.time_var.get()), 2))).grid(row=r, column=2, padx=2)
+            ttk.Button(box, text="Borrar todos", command=lambda p=prop, i=idx: self._keys_clear(i, p), state="normal" if keys else "disabled").grid(row=r, column=3, padx=2)
+        ttk.Label(box, text="En la timeline: arrastra un rombo para moverlo, doble clic para editar valor y curva, clic derecho para borrarlo, doble clic en la fila para añadir.", wraplength=460, foreground="#777", font=("TkDefaultFont", 8)).grid(row=4, column=0, columnspan=4, sticky="w", pady=(4, 0))
+
+    def _set_keys(self, idx: int, prop: str, keys: list):
+        layer = self.project.layers[idx]
+        self.project.layers[idx] = layer.model_copy(update={f"{prop}_keys": sorted(keys, key=lambda k: k.time)})
+        self._refresh_list("layers", select=idx)
+        self._changed()
+
+    def _key_add(self, idx: int, prop: str, t: float):
+        layer = self.project.layers[idx]
+        value = current_value(layer, prop, t)
+        key = PointKey(time=t, value=value) if prop == "position" else ScalarKey(time=t, value=value)
+        result = KeyDialog(self, prop, key, allow_delete=False).result
+        if result is None:
+            return
+        keys = list(getattr(layer, f"{prop}_keys")) + [result]
+        self._set_keys(idx, prop, keys)
+        self.nb.select(1)
+
+    def _key_edit(self, idx: int, prop: str, k: int):
+        layer = self.project.layers[idx]
+        keys = list(getattr(layer, f"{prop}_keys"))
+        if k >= len(keys):
+            return
+        dlg = KeyDialog(self, prop, keys[k], allow_delete=True)
+        if dlg.deleted:
+            del keys[k]
+        elif dlg.result is not None:
+            keys[k] = dlg.result
+        else:
+            return
+        self._set_keys(idx, prop, keys)
+
+    def _key_move(self, idx: int, prop: str, k: int, t: float):
+        layer = self.project.layers[idx]
+        keys = list(getattr(layer, f"{prop}_keys"))
+        if k < len(keys):
+            keys[k] = keys[k].model_copy(update={"time": max(t, 0.0)})
+            self._set_keys(idx, prop, keys)
+
+    def _key_delete(self, idx: int, prop: str, k: int):
+        layer = self.project.layers[idx]
+        keys = list(getattr(layer, f"{prop}_keys"))
+        if k < len(keys):
+            del keys[k]
+            self._set_keys(idx, prop, keys)
+
+    def _keys_clear(self, idx: int, prop: str):
+        if messagebox.askyesno("Borrar keyframes", f"¿Borrar todos los keyframes de {prop} de esta capa?", parent=self):
+            self._set_keys(idx, prop, [])
 
     def _set_item(self, kind: str, idx: int, model):
         items = self._items(kind)
@@ -1198,6 +1268,71 @@ class App(tk.Tk):
         if not self._confirm_discard():
             return
         self._stop_play()
+        self.destroy()
+
+
+class KeyDialog(tk.Toplevel):
+    """Diálogo para crear o editar un keyframe (tiempo, valor, curva)."""
+
+    EASINGS = ["linear", "ease_in", "ease_out", "ease_in_out", "back", "bounce"]
+    HINTS = {
+        "position": "x, y relativos al lienzo (0..1). Ej.: 0.5, 0.5 es el centro.",
+        "scale": "1 = tamaño configurado; 2 = el doble; 0 = invisible.",
+        "opacity": "0 = transparente, 1 = opaco (se multiplica con la opacidad de la capa).",
+        "rotation": "Grados; se suman a la rotación propia de la capa.",
+    }
+
+    def __init__(self, master, prop: str, key, allow_delete: bool):
+        super().__init__(master)
+        self.title(f"Keyframe de {prop}")
+        self.resizable(False, False)
+        self.result = None
+        self.deleted = False
+        self.prop = prop
+        frm = ttk.Frame(self, padding=10)
+        frm.pack(fill="both", expand=True)
+        ttk.Label(frm, text="Tiempo (s):").grid(row=0, column=0, sticky="w", pady=2)
+        self.t_var = tk.StringVar(value=f"{key.time:g}")
+        ttk.Entry(frm, textvariable=self.t_var, width=12).grid(row=0, column=1, sticky="w")
+        ttk.Label(frm, text="Valor:").grid(row=1, column=0, sticky="w", pady=2)
+        if prop == "position":
+            self.v_var = tk.StringVar(value=f"{key.value[0]:g}, {key.value[1]:g}")
+        else:
+            self.v_var = tk.StringVar(value=f"{key.value:g}")
+        ttk.Entry(frm, textvariable=self.v_var, width=16).grid(row=1, column=1, sticky="w")
+        ttk.Label(frm, text="Curva de llegada:").grid(row=2, column=0, sticky="w", pady=2)
+        self.e_var = tk.StringVar(value=key.easing)
+        ttk.Combobox(frm, textvariable=self.e_var, values=self.EASINGS, state="readonly", width=14).grid(row=2, column=1, sticky="w")
+        ttk.Label(frm, text=self.HINTS[prop], foreground="#666", wraplength=300, font=("TkDefaultFont", 8)).grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 8))
+        btns = ttk.Frame(frm)
+        btns.grid(row=4, column=0, columnspan=2, sticky="e")
+        if allow_delete:
+            ttk.Button(btns, text="Eliminar", command=self._delete).pack(side="left", padx=4)
+        ttk.Button(btns, text="Cancelar", command=self.destroy).pack(side="left", padx=4)
+        ttk.Button(btns, text="Guardar", command=self._save).pack(side="left", padx=4)
+        self.bind("<Return>", lambda e: self._save())
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.transient(master)
+        self.grab_set()
+        self.wait_window(self)
+
+    def _save(self):
+        try:
+            t = float(self.t_var.get())
+            if self.prop == "position":
+                parts = [float(p) for p in self.v_var.get().replace(";", ",").split(",")]
+                if len(parts) != 2:
+                    raise ValueError("Se esperan dos números")
+                self.result = PointKey(time=t, value=(parts[0], parts[1]), easing=self.e_var.get())
+            else:
+                self.result = ScalarKey(time=t, value=float(self.v_var.get()), easing=self.e_var.get())
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showwarning("Valor inválido", str(exc), parent=self)
+            return
+        self.destroy()
+
+    def _delete(self):
+        self.deleted = True
         self.destroy()
 
 

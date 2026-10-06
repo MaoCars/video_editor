@@ -14,7 +14,11 @@ from typing import Callable, Optional
 import numpy as np
 
 from ..audio.analysis import AudioFeatures
-from ..config import ProjectConfig
+from ..config import KEYFRAME_PROPS, ProjectConfig
+
+PROP_LABELS = {"position": "posición", "scale": "escala", "opacity": "opacidad", "rotation": "rotación"}
+KEY_COL = "#ffd166"
+KEY_R = 5
 
 LABEL_W = 132
 RULER_H = 18
@@ -45,10 +49,15 @@ class Timeline(ttk.Frame):
         on_select: Callable[[str, int], None],
         on_change: Callable[[str, int, Optional[float], Optional[float]], None],
         on_section_change: Callable[[int, float], None],
+        on_key_move: Optional[Callable[[int, str, int, float], None]] = None,
+        on_key_edit: Optional[Callable[[int, str, int], None]] = None,
+        on_key_add: Optional[Callable[[int, str, float], None]] = None,
+        on_key_delete: Optional[Callable[[int, str, int], None]] = None,
         height: int = 190,
     ):
         super().__init__(master)
         self.on_seek, self.on_select, self.on_change, self.on_section_change = on_seek, on_select, on_change, on_section_change
+        self.on_key_move, self.on_key_edit, self.on_key_add, self.on_key_delete = on_key_move, on_key_edit, on_key_add, on_key_delete
         self.project: Optional[ProjectConfig] = None
         self.features: Optional[AudioFeatures] = None
         self.duration = 60.0
@@ -74,6 +83,8 @@ class Timeline(ttk.Frame):
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
         self.canvas.bind("<Motion>", self._on_motion)
+        self.canvas.bind("<Double-Button-1>", self._on_double)
+        self.canvas.bind("<Button-3>", self._on_right)
         self.canvas.bind("<MouseWheel>", self._on_wheel)
         self.canvas.bind("<Button-4>", self._on_wheel)
         self.canvas.bind("<Button-5>", self._on_wheel)
@@ -141,9 +152,13 @@ class Timeline(ttk.Frame):
         if self.project is None:
             c.create_text(10, 10, anchor="nw", text="Timeline: carga un audio para ver las pistas", fill=TEXT)
             return
-        self._rows = [{"kind": "layers", "idx": i, "item": l} for i, l in enumerate(self.project.layers)] + [
-            {"kind": "effects", "idx": i, "item": e} for i, e in enumerate(self.project.effects)
-        ]
+        self._rows = []
+        for i, l in enumerate(self.project.layers):
+            self._rows.append({"kind": "layers", "idx": i, "item": l})
+            for prop in KEYFRAME_PROPS:
+                if getattr(l, f"{prop}_keys"):
+                    self._rows.append({"kind": "keys", "idx": i, "prop": prop, "item": l})
+        self._rows += [{"kind": "effects", "idx": i, "item": e} for i, e in enumerate(self.project.effects)]
         W = c.winfo_width()
         H = self._total_height()
         c.configure(scrollregion=(0, 0, W, H))
@@ -152,7 +167,10 @@ class Timeline(ttk.Frame):
         self._draw_sections(W)
         y = RULER_H + AUDIO_H + SECTION_H
         for row in self._rows:
-            self._draw_row(row, y, W)
+            if row["kind"] == "keys":
+                self._draw_key_row(row, y, W)
+            else:
+                self._draw_row(row, y, W)
             y += ROW_H
         c.create_rectangle(0, 0, LABEL_W, H, fill="#15151c", outline="")  # columna de etiquetas opaca
         self._draw_labels()
@@ -168,6 +186,10 @@ class Timeline(ttk.Frame):
         y = RULER_H + AUDIO_H + SECTION_H
         for row in self._rows:
             item = row["item"]
+            if row["kind"] == "keys":
+                c.create_text(18, y + ROW_H / 2, anchor="w", text="↳ " + PROP_LABELS[row["prop"]], fill=KEY_COL, font=("TkDefaultFont", 7))
+                y += ROW_H
+                continue
             name = item.name or item.type
             prefix = "◆ " if row["kind"] == "layers" else "✦ "
             fill = TEXT if item.enabled else "#777"
@@ -285,6 +307,22 @@ class Timeline(ttk.Frame):
             label = item.type if kind == "effects" else (item.name or item.type)
             c.create_text(max(xa, LABEL_W) + 4, (y0 + y1) / 2, anchor="w", text=label, fill="#111", font=("TkDefaultFont", 7))
 
+    def _draw_key_row(self, row: dict, y: int, W: int) -> None:
+        c = self.canvas
+        keys = sorted(getattr(row["item"], f"{row['prop']}_keys"), key=lambda k: k.time)
+        c.create_rectangle(LABEL_W, y, W, y + ROW_H, fill="#16161e", outline=GRID)
+        ym = y + ROW_H / 2
+        xs = [self._t2x(k.time) for k in keys]
+        if len(xs) > 1:
+            c.create_line(max(xs[0], LABEL_W), ym, min(xs[-1], W), ym, fill=KEY_COL, dash=(2, 3))
+        for k, (key, x) in enumerate(zip(keys, xs)):
+            if x < LABEL_W - KEY_R or x > W + KEY_R:
+                continue
+            orig_index = getattr(row["item"], f"{row['prop']}_keys").index(key)
+            c.create_polygon(x, ym - KEY_R, x + KEY_R, ym, x, ym + KEY_R, x - KEY_R, ym, fill=KEY_COL, outline="#333", tags=(f"key_{row['idx']}_{row['prop']}_{orig_index}",))
+            if len(xs) <= 12:
+                c.create_text(x, y + 1, anchor="n", text=_fmt_value(row["prop"], key.value), fill="#bbb", font=("TkDefaultFont", 6))
+
     # ------------------------------------------------------------------ interacción
     def _hit(self, x: float, y: float) -> Optional[dict]:
         """Qué hay bajo el ratón: ruler/audio, límite de sección, borde o centro de una barra."""
@@ -306,6 +344,12 @@ class Timeline(ttk.Frame):
         if 0 <= row_i < len(self._rows):
             row = self._rows[row_i]
             item = row["item"]
+            if row["kind"] == "keys":
+                keys = getattr(item, f"{row['prop']}_keys")
+                for k, key in enumerate(keys):
+                    if abs(self._t2x(key.time) - x) <= KEY_R + 2:
+                        return {"what": "key", "row": row, "k": k}
+                return {"what": "keyrow", "row": row}
             start = item.start if item.start is not None else 0.0
             end = item.end if item.end is not None else self.duration
             xa, xb = self._t2x(start), self._t2x(end)
@@ -322,7 +366,7 @@ class Timeline(ttk.Frame):
         hit = self._hit(event.x, event.y)
         cursor = ""
         if hit:
-            if hit["what"] in ("edge_start", "edge_end", "secbound"):
+            if hit["what"] in ("edge_start", "edge_end", "secbound", "key"):
                 cursor = "sb_h_double_arrow"
             elif hit["what"] == "move":
                 cursor = "fleur"
@@ -344,6 +388,15 @@ class Timeline(ttk.Frame):
         if hit["what"] == "secbound":
             self._drag = {"what": "secbound", "idx": hit["idx"], "t": self._sections[hit["idx"]].start}
             return
+        if hit["what"] == "keyrow":
+            self.on_select("layers", hit["row"]["idx"])
+            return
+        if hit["what"] == "key":
+            row = hit["row"]
+            self.on_select("layers", row["idx"])
+            key = getattr(row["item"], f"{row['prop']}_keys")[hit["k"]]
+            self._drag = {"what": "key", "row": row, "k": hit["k"], "t": key.time, "moved": False}
+            return
         row = hit["row"]
         item = row["item"]
         self.on_select(row["kind"], row["idx"])
@@ -362,6 +415,15 @@ class Timeline(ttk.Frame):
             self._seek(event.x)
             return
         t = self._x2t(event.x)
+        if d["what"] == "key":
+            d["t"] = t
+            d["moved"] = True
+            row = d["row"]
+            y = RULER_H + AUDIO_H + SECTION_H + ROW_H * self._rows.index(row)
+            ym = y + ROW_H / 2
+            x = self._t2x(t)
+            self.canvas.coords(f"key_{row['idx']}_{row['prop']}_{d['k']}", x, ym - KEY_R, x + KEY_R, ym, x, ym + KEY_R, x - KEY_R, ym)
+            return
         if d["what"] == "secbound":
             i = d["idx"]
             lo = self._sections[i - 1].start + 0.1
@@ -394,6 +456,10 @@ class Timeline(ttk.Frame):
         if d["what"] == "secbound":
             self.on_section_change(d["idx"], round(d["t"], 2))
             return
+        if d["what"] == "key":
+            if d.get("moved") and self.on_key_move:
+                self.on_key_move(d["row"]["idx"], d["row"]["prop"], d["k"], round(d["t"], 2))
+            return
         if d["what"] in ("edge_start", "edge_end", "move") and d.get("moved"):
             start = round(d["start"], 2)
             end = round(d["end"], 2)
@@ -402,6 +468,21 @@ class Timeline(ttk.Frame):
                 new_start = None
             new_end: Optional[float] = None if end >= self.duration - 0.05 else end
             self.on_change(d["row"]["kind"], d["row"]["idx"], new_start, new_end)
+
+    def _on_double(self, event) -> None:
+        hit = self._hit(event.x, event.y)
+        if not hit:
+            return
+        if hit["what"] == "key" and self.on_key_edit:
+            self._drag = None
+            self.on_key_edit(hit["row"]["idx"], hit["row"]["prop"], hit["k"])
+        elif hit["what"] == "keyrow" and self.on_key_add:
+            self.on_key_add(hit["row"]["idx"], hit["row"]["prop"], round(self._x2t(event.x), 2))
+
+    def _on_right(self, event) -> None:
+        hit = self._hit(event.x, event.y)
+        if hit and hit["what"] == "key" and self.on_key_delete:
+            self.on_key_delete(hit["row"]["idx"], hit["row"]["prop"], hit["k"])
 
     def _seek(self, x: float) -> None:
         t = self._x2t(x)
@@ -443,6 +524,14 @@ class Timeline(ttk.Frame):
         if self.duration <= 0:
             return
         self.hbar.set(self.view0 / self.duration, self.view1 / self.duration)
+
+
+def _fmt_value(prop: str, value) -> str:
+    if prop == "position":
+        return f"{value[0]:.2f}, {value[1]:.2f}"
+    if prop == "rotation":
+        return f"{value:.0f}°"
+    return f"{value:.2f}"
 
 
 def _nice_step(raw: float) -> float:
