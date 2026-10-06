@@ -78,6 +78,12 @@ musicviz gui mi_video.yaml   # abrir un proyecto existente
   **+** para añadir con el selector de color y **⇄** para invertir el degradado.
 - **Vista previa**: se actualiza sola al cambiar cualquier valor (casilla *Auto*), con control de tiempo,
   calidad y botón *Reproducir* (con audio si instalaste `sounddevice`).
+- **Edición directa en la vista previa**: clic sobre el espectro, una imagen, un texto o las partículas lo selecciona
+  (marco blanco) y abre su formulario; arrastrarlo lo mueve. Si la capa tiene keyframes de posición, el arrastre crea o
+  actualiza el keyframe del instante actual. Rueda del ratón: tamaño (radio del círculo, altura de barras, tamaño de
+  texto o imagen); Shift+rueda: giro de imagen o círculo; flechas: ajuste de 1 px (Shift: 10 px); Supr: eliminar la capa.
+  Clic en una zona libre (o con Alt) selecciona el fondo: arrastrar cambia el encuadre de la imagen o video de fondo
+  (`focus`) y la rueda su `zoom`.
 - **Timeline** (panel plegable bajo la vista previa): forma de onda con beats y kicks, secciones coloreadas,
   y una fila por capa y por efecto con su ventana de tiempo, las animaciones de entrada/salida sombreadas y
   atenuados los tramos donde la sección no los permite. Clic en el audio para saltar, clic en una barra para
@@ -226,7 +232,7 @@ vacía para añadir en ese instante.
 ### Fondo (`background`)
 
 `type: solid | gradient | radial | image | video`, `colors`, `angle`, `image`, `image_fit`,
-`blur`, `darken`, `pulse` + `pulse_trigger` (zoom al ritmo), `zoom` (aumento fijo), `shake` + `shake_trigger` +
+`focus` (encuadre al recortar con cover), `blur`, `darken`, `pulse` + `pulse_trigger` (zoom al ritmo), `zoom` (aumento fijo), `shake` + `shake_trigger` +
 `shake_rotation` (vibración), `react` + `react_trigger` (brillo con la energía).
 
 Con `type: video`: `video` (mp4, mov, webm...), `video_start` (segundo inicial), `video_loop` (repetir si es más

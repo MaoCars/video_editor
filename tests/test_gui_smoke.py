@@ -115,7 +115,7 @@ def test_gui_loads_previews_and_edits(app, tmp_path):
     tl._on_release(SimpleNamespace(x=tl._t2x(3.5), y=row_y))
     assert abs(app.project.layers[2].start - 1.5) < 0.1 and abs(app.project.layers[2].end - 5.5) < 0.1
     # keyframes: añadir sin diálogo (directo al modelo), sub-fila en la timeline, mover y borrar
-    from musicviz.config import ScalarKey
+    from musicviz.config import PointKey, ScalarKey
 
     app._set_keys(2, "opacity", [ScalarKey(time=1.0, value=1.0), ScalarKey(time=3.0, value=0.2)])
     app.update()
@@ -138,6 +138,37 @@ def test_gui_loads_previews_and_edits(app, tmp_path):
     app._toggle_timeline()
     app.timeline_visible.set(True)
     app._toggle_timeline()
+
+    # vista previa interactiva: seleccionar, arrastrar el texto, rueda y flechas
+    app.update()
+    assert app._disp is not None
+    ox, oy, dw, dh = app._disp
+    txt = app.project.layers[2]
+    assert txt.position == (0.5, 0.9) and not txt.position_keys
+    x, y = ox + 0.5 * dw, oy + 0.9 * dh
+    app._pv_press(SimpleNamespace(x=x, y=y, state=0))
+    assert app._sel_layer == 2 and app._pdrag and app._pdrag["kind"] == "layer"
+    app._pv_drag(SimpleNamespace(x=x, y=y - 0.4 * dh))
+    app._pv_release(SimpleNamespace(x=x, y=y - 0.4 * dh))
+    assert abs(app.project.layers[2].position[1] - 0.5) < 0.02 and abs(app.project.layers[2].position[0] - 0.5) < 0.01
+    size0 = app.project.layers[2].size
+    app._pv_wheel(SimpleNamespace(delta=120, num=None))
+    assert app.project.layers[2].size > size0
+    app._pv_arrow(SimpleNamespace(keysym="Right", state=1))
+    assert app.project.layers[2].position[0] > 0.5
+    # con keyframes de posición, arrastrar crea/actualiza el keyframe del instante actual
+    app._set_keys(2, "position", [PointKey(time=0.0, value=(0.5, 0.5))])
+    app.time_var.set(2.0)
+    app._pv_press(SimpleNamespace(x=ox + 0.5 * dw, y=oy + 0.5 * dh, state=0))
+    app._pv_drag(SimpleNamespace(x=ox + 0.8 * dw, y=oy + 0.5 * dh))
+    app._pv_release(SimpleNamespace(x=ox + 0.8 * dw, y=oy + 0.5 * dh))
+    keys = app.project.layers[2].position_keys
+    assert len(keys) == 2 and abs(keys[1].time - 2.0) < 0.01 and abs(keys[1].value[0] - 0.8) < 0.02
+    # clic en zona vacía selecciona el fondo; rueda = zoom del fondo
+    app._pv_press(SimpleNamespace(x=ox + 0.03 * dw, y=oy + 0.03 * dh, state=0))
+    assert app._sel_bg and app._sel_layer is None
+    app._pv_wheel(SimpleNamespace(delta=120, num=None))
+    assert app.project.background.zoom > 1.0
 
     # reproducción durante un instante
     app._start_play()

@@ -160,7 +160,7 @@ LABELS: dict[str, str] = {
     "video_speed": "Velocidad del video",
     "aspect": "Proporción ancho/alto",
     "fit": "Encaje",
-    "focus": "Foco del recorte (x, y)",
+    "focus": "Encuadre / foco del recorte (x, y)",
     "anchor": "Anclaje",
     "corner_radius": "Radio esquinas",
     "border": "Borde (px)",

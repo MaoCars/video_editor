@@ -26,6 +26,7 @@ from ..presets import load_preset, preset_names
 from ..render.canvas import over_checkerboard
 from .fields import FieldSpec, apply_value, field_specs, format_value, replace_submodel
 from .recent import add_recent, clear_recent, load_recent, remove_recent
+from .hittest import ROTATION_FIELD, SIZE_FIELD, hit_layer, layer_box
 from .timeline import Timeline
 
 PREVIEW_SCALES = {"Baja (480p)": 480 / 1080, "Media (540p)": 0.5, "Alta (720p)": 720 / 1080}
@@ -438,8 +439,28 @@ class App(tk.Tk):
 
         right = ttk.Frame(paned)
         paned.add(right, weight=1)
-        self.preview_label = tk.Label(right, bg="#111118", text="Vista previa\n\nElige un archivo de audio para empezar", fg="#aaa", font=("TkDefaultFont", 12))
-        self.preview_label.pack(fill="both", expand=True)
+        self.preview = tk.Canvas(right, bg="#111118", highlightthickness=0, cursor="crosshair")
+        self.preview.pack(fill="both", expand=True)
+        self.preview.create_text(20, 20, anchor="nw", text="Vista previa\n\nElige un archivo de audio para empezar", fill="#aaa", font=("TkDefaultFont", 12), tags="hint")
+        self._disp = None  # (ox, oy, dw, dh): rectángulo donde se dibuja la imagen
+        self._sel_layer: Optional[int] = None  # capa seleccionada en la vista previa (None = fondo si _sel_bg)
+        self._sel_bg = False
+        self._pdrag: Optional[dict] = None
+        self._quick_preview = False
+        self.preview.bind("<Configure>", lambda e: self._redraw_preview())
+        self.preview.bind("<ButtonPress-1>", self._pv_press)
+        self.preview.bind("<B1-Motion>", self._pv_drag)
+        self.preview.bind("<ButtonRelease-1>", self._pv_release)
+        self.preview.bind("<MouseWheel>", self._pv_wheel)
+        self.preview.bind("<Button-4>", self._pv_wheel)
+        self.preview.bind("<Button-5>", self._pv_wheel)
+        self.preview.bind("<Shift-MouseWheel>", lambda e: self._pv_wheel(e, shift=True))
+        self.preview.bind("<Shift-Button-4>", lambda e: self._pv_wheel(e, shift=True))
+        self.preview.bind("<Shift-Button-5>", lambda e: self._pv_wheel(e, shift=True))
+        for key in ("<Left>", "<Right>", "<Up>", "<Down>", "<Shift-Left>", "<Shift-Right>", "<Shift-Up>", "<Shift-Down>"):
+            self.preview.bind(key, self._pv_arrow)
+        self.preview.bind("<Escape>", lambda e: self._pv_select(None, False))
+        self.preview.bind("<Delete>", lambda e: self._pv_delete_selected())
         ctl = ttk.Frame(right, padding=(0, 6))
         ctl.pack(fill="x")
         self.time_var = tk.DoubleVar(value=0.0)
@@ -463,7 +484,7 @@ class App(tk.Tk):
         self.timeline_visible = tk.BooleanVar(value=True)
         self.timeline_btn = ttk.Checkbutton(tl_bar, text="Timeline", variable=self.timeline_visible, command=self._toggle_timeline, style="Toolbutton")
         self.timeline_btn.pack(side="left")
-        ttk.Label(tl_bar, text="clic: ir · arrastrar barra: mover · bordes: inicio/fin · rueda: zoom · Shift+rueda: desplazar", foreground="#777", font=("TkDefaultFont", 8)).pack(side="left", padx=10)
+        ttk.Label(tl_bar, text="Vista previa: clic selecciona · arrastrar mueve · rueda tamaño (Shift: giro) · flechas ajustan · fondo: arrastrar encuadre, rueda zoom", foreground="#777", font=("TkDefaultFont", 8)).pack(side="left", padx=10)
         self.timeline = Timeline(
             right, on_seek=self._tl_seek, on_select=self._tl_select, on_change=self._tl_change, on_section_change=self._tl_section_change,
             on_key_move=self._key_move, on_key_edit=self._key_edit, on_key_add=self._key_add, on_key_delete=self._key_delete,
@@ -667,6 +688,9 @@ class App(tk.Tk):
         if kind in ("layers", "effects") and hasattr(self, "timeline") and lb.curselection():
             if self.timeline.selected != (kind, lb.curselection()[0]):
                 self.timeline.set_selected(kind, lb.curselection()[0])
+            if kind == "layers" and hasattr(self, "preview"):
+                self._sel_layer, self._sel_bg = lb.curselection()[0], False
+                self._draw_overlay()
         items = self._items(kind)
         if not lb.curselection() or not items:
             ttk.Label(form.inner, text="Añade un elemento con el botón ＋", padding=10).pack()
@@ -795,6 +819,8 @@ class App(tk.Tk):
         if not items:
             return
         del items[idx]
+        if kind == "layers" and self._sel_layer is not None and self._sel_layer >= len(items):
+            self._sel_layer = None
         self._refresh_list(kind, select=max(idx - 1, 0))
         self._changed()
 
@@ -995,8 +1021,9 @@ class App(tk.Tk):
         self._preview_after = None
         self._update_time_label()
         if not self._audio_ready():
-            self.preview_label.configure(image="", text="Vista previa\n\nElige un archivo de audio para empezar")
             self._photo = None
+            self.preview.delete("img", "overlay")
+            self.preview.itemconfigure("hint", state="normal")
             return
         if self._preview_busy:
             self._preview_pending = True
@@ -1004,7 +1031,7 @@ class App(tk.Tk):
         self._preview_busy = True
         project = self.project.model_copy(deep=True)
         t = float(self.time_var.get())
-        scale = PREVIEW_SCALES[self.scale_var.get()]
+        scale = min(PREVIEW_SCALES[self.scale_var.get()], 0.3) if self._quick_preview else PREVIEW_SCALES[self.scale_var.get()]
         threading.Thread(target=self._preview_worker, args=(project, t, scale), daemon=True).start()
 
     def _preview_worker(self, project: ProjectConfig, t: float, scale: float):
@@ -1034,15 +1061,198 @@ class App(tk.Tk):
     def _show_image(self, img: np.ndarray):
         if img.shape[2] == 4:
             img = over_checkerboard(img)
-        lw = max(self.preview_label.winfo_width(), 320)
-        lh = max(self.preview_label.winfo_height(), 180)
+        self._last_frame = img
+        self._redraw_preview()
+
+    def _redraw_preview(self):
+        img = getattr(self, "_last_frame", None)
+        if img is None:
+            return
+        cw = max(self.preview.winfo_width(), 320)
+        ch = max(self.preview.winfo_height(), 180)
         h, w = img.shape[:2]
-        k = min(lw / w, lh / h)
+        k = min(cw / w, ch / h)
+        dw, dh = max(int(w * k), 1), max(int(h * k), 1)
         pil = Image.fromarray(img)
-        if abs(k - 1.0) > 0.01:
-            pil = pil.resize((max(int(w * k), 1), max(int(h * k), 1)), Image.BILINEAR)
+        if (dw, dh) != (w, h):
+            pil = pil.resize((dw, dh), Image.BILINEAR)
         self._photo = ImageTk.PhotoImage(pil)
-        self.preview_label.configure(image=self._photo, text="")
+        ox, oy = (cw - dw) // 2, (ch - dh) // 2
+        self._disp = (ox, oy, dw, dh)
+        self.preview.delete("img")
+        self.preview.itemconfigure("hint", state="hidden")
+        self.preview.create_image(ox, oy, anchor="nw", image=self._photo, tags="img")
+        self.preview.tag_lower("img")
+        self._draw_overlay()
+
+    def _draw_overlay(self):
+        self.preview.delete("overlay")
+        if self._disp is None:
+            return
+        ox, oy, dw, dh = self._disp
+        if self._sel_bg:
+            self.preview.create_rectangle(ox + 1, oy + 1, ox + dw - 1, oy + dh - 1, outline="#ffd166", dash=(6, 4), width=2, tags="overlay")
+            self.preview.create_text(ox + 8, oy + 8, anchor="nw", text="fondo · arrastra para encuadrar · rueda: zoom", fill="#ffd166", font=("TkDefaultFont", 9, "bold"), tags="overlay")
+            return
+        if self._sel_layer is None or self._sel_layer >= len(self.project.layers):
+            return
+        layer = self.project.layers[self._sel_layer]
+        box = layer_box(layer, self.project, float(self.time_var.get()))
+        if not box:
+            return
+        x0, y0, x1, y1 = (ox + box[0] * dw, oy + box[1] * dh, ox + box[2] * dw, oy + box[3] * dh)
+        self.preview.create_rectangle(x0, y0, x1, y1, outline="#ffffff", dash=(5, 3), width=2, tags="overlay")
+        for cx, cy in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
+            self.preview.create_rectangle(cx - 3, cy - 3, cx + 3, cy + 3, fill="#ffffff", outline="", tags="overlay")
+        name = layer.name or layer.type
+        extra = "  (keyframe)" if layer.position_keys else ""
+        self.preview.create_text(x0, max(y0 - 4, oy + 2), anchor="sw" if y0 - 4 > oy + 12 else "nw", text=name + extra, fill="#ffffff", font=("TkDefaultFont", 9, "bold"), tags="overlay")
+
+    # ------------------------------------------------------------------ interacción en la vista previa
+    def _pv_to_rel(self, x: float, y: float) -> Optional[tuple[float, float]]:
+        if self._disp is None:
+            return None
+        ox, oy, dw, dh = self._disp
+        return ((x - ox) / dw, (y - oy) / dh)
+
+    def _pv_select(self, idx: Optional[int], bg: bool):
+        self._sel_layer, self._sel_bg = idx, bg
+        if idx is not None:
+            self._tl_select("layers", idx)
+        elif bg:
+            self.nb.select(0)
+        self._draw_overlay()
+
+    def _pv_press(self, event):
+        self.preview.focus_set()
+        rel = self._pv_to_rel(event.x, event.y)
+        if rel is None or not self._audio_ready():
+            return
+        rx, ry = rel
+        t = float(self.time_var.get())
+        idx = None if (event.state & 0x20000) else hit_layer(self.project, t, rx, ry)  # Alt fuerza el fondo
+        inside = 0.0 <= rx <= 1.0 and 0.0 <= ry <= 1.0
+        if idx is None and not inside:
+            self._pv_select(None, False)
+            return
+        self._pv_select(idx, idx is None)
+        if idx is not None:
+            layer = self.project.layers[idx]
+            from ..layers.keyframes import current_value
+
+            self._pdrag = {"kind": "layer", "idx": idx, "rx": rx, "ry": ry, "orig": tuple(current_value(layer, "position", t)), "moved": False, "t": t}
+        else:
+            bg = self.project.background
+            if bg.type in ("image", "video") and bg.image_fit == "cover":
+                self._pdrag = {"kind": "bg", "rx": rx, "ry": ry, "orig": tuple(bg.focus), "moved": False}
+            else:
+                self._pdrag = None
+                self._set_status("El fondo sólo se encuadra con tipo imagen o video en modo cover; usa la rueda para el zoom")
+
+    def _pv_drag(self, event):
+        d = self._pdrag
+        rel = self._pv_to_rel(event.x, event.y)
+        if not d or rel is None:
+            return
+        dx, dy = rel[0] - d["rx"], rel[1] - d["ry"]
+        if abs(dx) < 0.002 and abs(dy) < 0.002 and not d["moved"]:
+            return
+        d["moved"] = True
+        if d["kind"] == "layer":
+            nx = min(max(d["orig"][0] + dx, -0.5), 1.5)
+            ny = min(max(d["orig"][1] + dy, -0.5), 1.5)
+            self._set_layer_position(d["idx"], (round(nx, 4), round(ny, 4)), d["t"], quick=True)
+        else:
+            # Arrastrar el fondo mueve el encuadre en sentido contrario al foco
+            fx = min(max(d["orig"][0] - dx, 0.0), 1.0)
+            fy = min(max(d["orig"][1] - dy, 0.0), 1.0)
+            self.project.background = self.project.background.model_copy(update={"focus": (round(fx, 4), round(fy, 4))})
+            self._quick_preview = True
+            self._request_preview(force=True)
+        self._draw_overlay()
+
+    def _pv_release(self, event):
+        d, self._pdrag = self._pdrag, None
+        if not d or not d.get("moved"):
+            return
+        self._quick_preview = False
+        if d["kind"] == "bg":
+            self._build_project_tab()
+        else:
+            self._refresh_list("layers", select=d["idx"])
+        self._changed()
+
+    def _set_layer_position(self, idx: int, pos: tuple[float, float], t: float, quick: bool = False):
+        """Mueve una capa: posición fija, o el keyframe de posición del instante actual (creándolo si no existe)."""
+        layer = self.project.layers[idx]
+        if layer.position_keys:
+            keys = list(layer.position_keys)
+            hit = next((k for k, key in enumerate(keys) if abs(key.time - t) < 0.05), None)
+            if hit is None:
+                keys.append(PointKey(time=round(t, 2), value=pos))
+            else:
+                keys[hit] = keys[hit].model_copy(update={"value": pos})
+            self.project.layers[idx] = layer.model_copy(update={"position_keys": sorted(keys, key=lambda k: k.time)})
+        else:
+            self.project.layers[idx] = layer.model_copy(update={"position": pos})
+        self._quick_preview = quick
+        self._request_preview(force=True)
+        if not quick:
+            self._refresh_list("layers", select=idx)
+            self._changed()
+
+    def _pv_wheel(self, event, shift: bool = False):
+        direction = 1 if (getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0) else -1
+        factor = 1.05 if direction > 0 else 1 / 1.05
+        if self._sel_bg:
+            bg = self.project.background
+            zoom = min(max(bg.zoom * factor, 1.0), 3.0)
+            self.project.background = bg.model_copy(update={"zoom": round(zoom, 3)})
+            self._build_project_tab()
+            self._changed()
+            self._set_status(f"Zoom del fondo: {zoom:.2f}")
+            return
+        if self._sel_layer is None or self._sel_layer >= len(self.project.layers):
+            return
+        layer = self.project.layers[self._sel_layer]
+        if shift:
+            field = ROTATION_FIELD.get(layer.type)
+            if not field:
+                self._set_status("Esta capa no tiene rotación (usa keyframes de rotación para el texto)")
+                return
+            value = round(getattr(layer, field) + direction * 5.0, 1)
+        else:
+            field = SIZE_FIELD.get(layer.type)
+            if not field:
+                return
+            value = round(getattr(layer, field) * factor, 4)
+        try:
+            self.project.layers[self._sel_layer] = layer.model_copy(update={field: value})
+        except Exception as exc:  # noqa: BLE001
+            self._set_status(str(exc))
+            return
+        self._refresh_list("layers", select=self._sel_layer)
+        self._changed()
+        self._set_status(f"{layer.type}.{field} = {value}")
+
+    def _pv_arrow(self, event):
+        if self._sel_layer is None or self._sel_layer >= len(self.project.layers):
+            return
+        step_px = 10 if (event.state & 0x1) else 1
+        dx = {"Left": -1, "Right": 1}.get(event.keysym, 0) * step_px / self.project.output.width
+        dy = {"Up": -1, "Down": 1}.get(event.keysym, 0) * step_px / self.project.output.height
+        from ..layers.keyframes import current_value
+
+        t = float(self.time_var.get())
+        px, py = current_value(self.project.layers[self._sel_layer], "position", t)
+        self._set_layer_position(self._sel_layer, (round(px + dx, 4), round(py + dy, 4)), t)
+
+    def _pv_delete_selected(self):
+        if self._sel_layer is not None and self._sel_layer < len(self.project.layers):
+            self.layers_list.selection_clear(0, "end")
+            self.layers_list.selection_set(self._sel_layer)
+            self._del_item("layers")
+            self._pv_select(None, False)
 
     def _on_time_drag(self):
         self._update_time_label()
@@ -1053,6 +1263,8 @@ class App(tk.Tk):
         total = self._features.duration if self._features else 0.0
         if self.timeline_visible.get():
             self.timeline.set_time(float(self.time_var.get()))
+        if hasattr(self, "preview"):
+            self._draw_overlay()
         label = f"{_fmt(self.time_var.get())} / {_fmt(total)}"
         if self._features is not None and self.project.sections:
             try:

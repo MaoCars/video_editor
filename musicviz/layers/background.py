@@ -26,7 +26,7 @@ def load_image_rgba(path: str) -> np.ndarray:
     return img
 
 
-def fit_image(img: np.ndarray, width: int, height: int, mode: str) -> np.ndarray:
+def fit_image(img: np.ndarray, width: int, height: int, mode: str, focus: tuple[float, float] = (0.5, 0.5)) -> np.ndarray:
     h, w = img.shape[:2]
     if mode == "stretch":
         return cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
@@ -34,8 +34,10 @@ def fit_image(img: np.ndarray, width: int, height: int, mode: str) -> np.ndarray
     nw, nh = max(int(round(w * scale)), 1), max(int(round(h * scale)), 1)
     resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC)
     out = np.zeros((height, width, img.shape[2]), img.dtype)
-    x0 = (width - nw) // 2
-    y0 = (height - nh) // 2
+    fx = min(max(focus[0], 0.0), 1.0) if mode == "cover" else 0.5
+    fy = min(max(focus[1], 0.0), 1.0) if mode == "cover" else 0.5
+    x0 = int(round((width - nw) * fx))
+    y0 = int(round((height - nh) * fy))
     sx0, sy0 = max(-x0, 0), max(-y0, 0)
     dx0, dy0 = max(x0, 0), max(y0, 0)
     dw, dh = min(nw - sx0, width - dx0), min(nh - sy0, height - dy0)
@@ -144,7 +146,7 @@ class Background:
             if not cfg.image:
                 raise ValueError("background.type=image requiere background.image")
             img = load_image_rgba(cfg.image)
-            img = fit_image(img, w, h, cfg.image_fit)
+            img = fit_image(img, w, h, cfg.image_fit, cfg.focus)
             base = img[..., :3].astype(np.float32) / 255.0
             if cfg.blur > 0:
                 base = fast_blur(base, ctx.px(cfg.blur))
@@ -167,7 +169,7 @@ class Background:
         t = cfg.video_start + frame.time * cfg.video_speed
         rgb = self.video.frame_at(t, cfg.video_loop)
         rgba = cv2.cvtColor(rgb, cv2.COLOR_RGB2RGBA)
-        fitted = fit_image(rgba, self.ctx.width, self.ctx.height, cfg.image_fit)
+        fitted = fit_image(rgba, self.ctx.width, self.ctx.height, cfg.image_fit, cfg.focus)
         img = fitted[..., :3].astype(np.float32) * np.float32(1.0 / 255.0)
         if cfg.blur > 0:
             img = fast_blur(img, self.ctx.px(cfg.blur))

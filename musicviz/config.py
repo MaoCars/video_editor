@@ -105,6 +105,8 @@ class BackgroundConfig(StrictModel):
     angle: float = 90.0
     image: Optional[str] = None
     image_fit: Literal["cover", "contain", "stretch"] = "cover"
+    focus: Tuple[float, float] = (0.5, 0.5)
+    """Zona de la imagen/video que se conserva al recortar con `cover` (0,0 = esquina superior izquierda)."""
     video: Optional[str] = None
     """Archivo de video de fondo (mp4, mov, webm...). Su audio se ignora; se usa el de la canción."""
     video_start: float = 0.0
