@@ -19,6 +19,7 @@ dependencies = [
     "soundfile>=0.12",
     "pillow>=10.1",
     "moderngl>=5.8",
+    "glfw>=2.6",
 ]
 
 [project.optional-dependencies]

@@ -7,3 +7,4 @@ rich>=13.0
 soundfile>=0.12
 pillow>=10.1
 moderngl>=5.8
+glfw>=2.6

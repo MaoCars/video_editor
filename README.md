@@ -88,6 +88,9 @@ musicviz gui mi_video.yaml   # abrir un proyecto existente
   **+** para añadir con el selector de color y **⇄** para invertir el degradado.
 - **Vista previa**: se actualiza sola al cambiar cualquier valor (casilla *Auto*), con control de tiempo,
   calidad y botón *Reproducir* (con audio si instalaste `sounddevice`).
+- **Ventana GL**: abre un reproductor OpenGL en una ventana aparte a la resolución real del proyecto (1080p, 4K…),
+  dibujado directamente por la GPU sin pasar por la CPU: lo que ves es exactamente el render final, a la velocidad
+  real. ESC o Q cierra, ESPACIO pausa, ←/→ salta 5 s, Inicio vuelve al principio y F alterna pantalla completa.
 - **Edición directa en la vista previa**: clic sobre el espectro, una imagen, un texto o las partículas lo selecciona
   (marco blanco) y abre su formulario; arrastrarlo lo mueve. Si la capa tiene keyframes de posición, el arrastre crea o
   actualiza el keyframe del instante actual. Rueda del ratón: tamaño (radio del círculo, altura de barras, tamaño de
@@ -113,8 +116,9 @@ musicviz init mi_video.yaml --audio "C:\Musica\mi_cancion.mp3" --preset trap_nat
 # 2) Ver un frame para ajustar el diseño (rápido)
 musicviz snapshot mi_video.yaml --time 45 --output prueba.png
 
-# 3) Vista previa en ventana (ESC salir, ESPACIO pausa, ←/→ saltar 5 s)
-musicviz preview mi_video.yaml --scale 0.5
+# 3) Reproducir en una ventana OpenGL a resolución completa (ESC salir, ESPACIO pausa, ←/→ ±5 s, F pantalla completa)
+musicviz preview mi_video.yaml
+#    (--classic abre la vista previa antigua en Tkinter, por CPU y escalada con --scale)
 
 # 4) Render de prueba de 10 s a media resolución
 musicviz render mi_video.yaml --start 40 --duration 10 --scale 0.5 -o prueba.mp4
@@ -490,7 +494,7 @@ musicviz/
   render/engine.py    # SceneBase/Scene (CPU), render por frame, pool de procesos, elección de motor
   render/gpu/         # motor GPU: shaders GLSL (shaders.py) y GpuScene (scene.py) que reutiliza la geometría de las capas
   render/exporter.py  # ffmpeg (NVENC / libx264) + mezcla de audio
-  render/preview.py   # ventana de vista previa (OpenCV)
+  render/player.py    # reproductor OpenGL a resolución completa (glfw); render/preview.py es la vista previa Tk clásica
   gui/app.py          # interfaz gráfica Tkinter; gui/fields.py genera los formularios desde los modelos
   presets/*.yaml
 ```

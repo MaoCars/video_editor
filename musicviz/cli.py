@@ -164,15 +164,27 @@ def snapshot(
 @app.command()
 def preview(
     project: Path = typer.Argument(..., help="Archivo YAML del proyecto."),
-    scale: float = typer.Option(0.5, "--scale", "-s", min=0.1, max=1.0, help="Resolución de la vista previa."),
+    scale: float = typer.Option(0.5, "--scale", "-s", min=0.1, max=1.0, help="Resolución de la vista previa clásica (Tk)."),
     start: float = typer.Option(0.0, "--start", help="Segundo inicial."),
     no_audio: bool = typer.Option(False, "--no-audio", help="No reproducir audio (requiere `pip install sounddevice`)."),
+    classic: bool = typer.Option(False, "--classic", help="Usar la vista previa clásica en Tkinter (CPU, escalada) en vez de la ventana OpenGL."),
 ):
-    """Abre una ventana con la vista previa en tiempo real (ESC salir, ESPACIO pausa, ←/→ saltar)."""
-    from .render.preview import preview as run_preview
-
+    """Reproduce el proyecto en una ventana OpenGL a resolución completa (ESC salir, ESPACIO pausa, ←/→ ±5 s, F pantalla completa)."""
     cfg = _load_project(project)
     features = _analyze(cfg)
+    if not classic:
+        from .render.player import player_available, run_player
+
+        # No se comprueba la GPU con un contexto aparte antes de abrir la ventana: con Mesa, crear un
+        # contexto EGL y después uno GLX en el mismo proceso falla. La ventana ya prueba OpenGL 3.3.
+        if player_available():
+            try:
+                run_player(cfg, features, start=start, with_audio=not no_audio)
+                return
+            except RuntimeError as exc:
+                console.print(f"[yellow]Ventana OpenGL no disponible ({exc}); usando la vista previa clásica.[/]")
+    from .render.preview import preview as run_preview
+
     run_preview(cfg, features, scale=scale, start=start, with_audio=not no_audio)
 
 
@@ -277,6 +289,9 @@ def check():
     from .render.gpu import gpu_info
 
     table.add_row("GPU (OpenGL)", gpu_info())
+    from .render.player import player_available
+
+    table.add_row("Ventana OpenGL (glfw)", "instalado" if player_available() else "[yellow]no instalado (pip install glfw)[/yellow]")
     try:
         import cv2
 

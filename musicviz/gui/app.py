@@ -362,6 +362,7 @@ class App(tk.Tk):
         self._preview_pending = False
         self._preview_after: Optional[str] = None
         self._playing = False
+        self._player_proc = None  # reproductor OpenGL en proceso aparte
         self._play_thread: Optional[threading.Thread] = None
         self._rendering = False
         self._cancel_event = threading.Event()
@@ -472,6 +473,8 @@ class App(tk.Tk):
         self.time_label.pack(side="left")
         self.play_btn = ttk.Button(ctl, text="▶ Reproducir", command=self._toggle_play, width=14)
         self.play_btn.pack(side="left", padx=4)
+        self.window_btn = ttk.Button(ctl, text="⧉ Ventana GL", command=self._toggle_player, width=13)
+        self.window_btn.pack(side="left", padx=(0, 4))
         ttk.Button(ctl, text="Actualizar", command=lambda: self._request_preview(force=True)).pack(side="left", padx=4)
         self.auto_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(ctl, text="Auto", variable=self.auto_var).pack(side="left")
@@ -1314,6 +1317,62 @@ class App(tk.Tk):
             pass
         self.play_btn.configure(text="▶ Reproducir")
 
+    # ------------------------------------------------------------------ ventana OpenGL
+    def _toggle_player(self):
+        """Abre (o cierra) el reproductor OpenGL a resolución completa en un proceso aparte."""
+        if self._player_proc is not None and self._player_proc.is_alive():
+            self._close_player()
+            return
+        if not self._audio_ready():
+            self._set_status("Elige un archivo de audio primero")
+            return
+        from ..render.gpu import gpu_available
+        from ..render.player import player_available
+
+        if not player_available():
+            messagebox.showwarning("Falta glfw", "La ventana OpenGL necesita el paquete `glfw` (pip install glfw).", parent=self)
+            return
+        if not gpu_available():
+            messagebox.showwarning("Sin OpenGL", "No hay un contexto OpenGL 3.3 disponible; usa el botón Reproducir.", parent=self)
+            return
+        if self._playing:
+            self._stop_play()
+        project = self.project.model_copy(deep=True)
+        start = float(self.time_var.get())
+        self.window_btn.configure(state="disabled")
+        self.renderer.submit(lambda svc: self._player_job(svc, project, start), key="player")
+
+    def _player_job(self, svc: RenderService, project: ProjectConfig, start: float):
+        try:
+            feats = self._service_features(svc, project)
+            from ..render.player import launch_player
+
+            proc = launch_player(project, feats, start=start)
+            self._queue.put(("player_started", proc))
+        except Exception as exc:  # noqa: BLE001
+            self._queue.put(("error", f"Ventana OpenGL: {exc}"))
+            self._queue.put(("player_ended", None))
+
+    def _close_player(self):
+        proc = self._player_proc
+        if proc is not None and proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=2.0)
+        self._player_proc = None
+        self.window_btn.configure(text="⧉ Ventana GL", state="normal")
+
+    def _watch_player(self):
+        proc = self._player_proc
+        if proc is None:
+            return
+        if proc.is_alive():
+            self.after(300, self._watch_player)
+            return
+        self._player_proc = None
+        self.window_btn.configure(text="⧉ Ventana GL", state="normal")
+        if proc.exitcode not in (0, None, -15):
+            self._set_status(f"La ventana OpenGL se cerró con error (código {proc.exitcode}); revisa la consola.")
+
     def _play_job(self, svc: RenderService, project: ProjectConfig, start: float, scale: float):
         """Reproducción en el hilo de render: reutiliza la escena en caché y sincroniza con el reloj (y el audio)."""
         try:
@@ -1428,6 +1487,14 @@ class App(tk.Tk):
                 elif kind == "play_end":
                     if self._playing:
                         self._stop_play()
+                elif kind == "player_started":
+                    self._player_proc = payload
+                    self.window_btn.configure(text="■ Cerrar ventana", state="normal")
+                    self._set_status("Reproductor OpenGL abierto (ESC cierra, ESPACIO pausa, ←/→ ±5 s, F pantalla completa)")
+                    self.after(300, self._watch_player)
+                elif kind == "player_ended":
+                    self._player_proc = None
+                    self.window_btn.configure(text="⧉ Ventana GL", state="normal")
                 elif kind == "progress":
                     done, total = payload
                     self.progress.configure(maximum=total, value=done)
@@ -1489,6 +1556,7 @@ class App(tk.Tk):
         if not self._confirm_discard():
             return
         self._stop_play()
+        self._close_player()
         self.renderer.shutdown()
         self.destroy()
 

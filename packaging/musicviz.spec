@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 ROOT = Path(SPECPATH).parent
 block_cipher = None
@@ -15,16 +15,18 @@ block_cipher = None
 datas = collect_data_files("musicviz", includes=["presets/*.yaml"])
 datas += collect_data_files("moderngl")
 datas += collect_data_files("glcontext")
+datas += collect_data_files("glfw")  # la DLL/.so de glfw viene dentro del paquete
+binaries = collect_dynamic_libs("glfw")
 hiddenimports = (
     collect_submodules("musicviz")
     + collect_submodules("glcontext")
-    + ["moderngl", "glcontext", "PIL.ImageTk", "PIL._tkinter_finder", "soundfile", "yaml"]
+    + ["moderngl", "glcontext", "glfw", "PIL.ImageTk", "PIL._tkinter_finder", "soundfile", "yaml"]
 )
 excludes = ["tests", "pytest", "matplotlib", "IPython", "jupyter", "notebook", "pandas", "sklearn", "torch", "tensorflow", "scipy", "tkinter.test", "unittest", "pydoc_data", "lib2to3", "setuptools", "pkg_resources", "distutils"]
 
 common = dict(
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

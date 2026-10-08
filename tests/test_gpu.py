@@ -146,3 +146,85 @@ def test_render_many_matches_render(audio_cfg, features, tmp_path):
             assert list(gpu.render_many([7]))[0].shape == many[0].shape
         finally:
             gpu.close()
+
+
+# ---------------------------------------------------------------- reproductor OpenGL
+def test_screen_blit_keeps_orientation_and_aspect(audio_cfg, features):
+    """Lo que se dibuja en pantalla es el frame final (misma orientación) con bandas negras si cambia la proporción."""
+    import cv2
+
+    from musicviz.render.gpu import GL_LOCK
+    from musicviz.render.player import ScreenBlit
+
+    layers = [{"type": "text", "text": "ARRIBA", "position": [0.5, 0.15], "size": 0.2}, {"type": "bars", "colors": ["#ff0000"]}]
+    project = _project(audio_cfg, background={"type": "gradient", "colors": ["#000040", "#400000"]}, layers=layers)
+    gpu = make_scene(project, features, W, H, "gpu")
+    try:
+        with GL_LOCK:
+            blit = ScreenBlit(gpu.gl, gpu)
+            tw, th = 480, 180  # más ancho que 16:9: bandas a los lados de 80 px
+            tex = gpu.gl.texture((tw, th), 4, dtype="f1")
+            fbo = gpu.gl.framebuffer(color_attachments=[tex])
+            ref = gpu.render(40)
+            blit.draw(fbo, tw, th)
+            # fbo.read devuelve las filas de abajo arriba (convención GL, igual que la pantalla): se invierte para comparar
+            shown = np.frombuffer(fbo.read(components=3, dtype="f1"), np.uint8).reshape(th, tw, 3)[::-1]
+            fbo.release()
+            tex.release()
+            blit.release()
+        assert shown[:, :80].max() == 0 and shown[:, -80:].max() == 0  # bandas negras
+        inner = shown[:, 80:-80]
+        assert inner.shape == ref.shape
+        d = np.abs(inner.astype(int) - ref.astype(int))
+        assert d.mean() < 2.0, d.mean()  # misma imagen, no invertida (el texto arriba sigue arriba)
+        assert np.abs(inner.astype(int) - ref[::-1].astype(int)).mean() > d.mean() + 5
+        # destino más alto que el frame: bandas arriba y abajo y el frame escalado
+        with GL_LOCK:
+            tex = gpu.gl.texture((160, 180), 4, dtype="f1")
+            fbo = gpu.gl.framebuffer(color_attachments=[tex])
+            blit2 = ScreenBlit(gpu.gl, gpu)
+            blit2.draw(fbo, 160, 180)
+            tall = np.frombuffer(fbo.read(components=3, dtype="f1"), np.uint8).reshape(180, 160, 3)[::-1]
+            fbo.release()
+            tex.release()
+            blit2.release()
+        assert tall[:40].max() == 0 and tall[-40:].max() == 0
+        small = cv2.resize(ref, (160, 90), interpolation=cv2.INTER_AREA)
+        assert np.abs(tall[45:135].astype(int) - small.astype(int)).mean() < 12
+    finally:
+        gpu.close()
+
+
+def test_window_size_fits_monitor():
+    from musicviz.render.player import window_size
+
+    assert window_size(1920, 1080, 2560, 1440) == (1920, 1080)
+    assert window_size(1920, 1080, 1366, 768) == (1229, 691)
+    assert window_size(1080, 1920, 1920, 1080) == (547, 972)
+
+
+def test_player_window_runs_to_end(audio_cfg, features):
+    """Abre la ventana glfw de verdad (bajo Xvfb en CI) y reproduce los últimos 0.3 s hasta cerrarse sola."""
+    import subprocess
+    import sys
+
+    pytest.importorskip("glfw")
+    if not os.environ.get("DISPLAY") and sys.platform.startswith("linux"):
+        pytest.skip("sin pantalla")
+    project = load_preset("minimal", audio_cfg.file)
+    project.output.width, project.output.height, project.output.fps = W, H, 30
+    code = (
+        "import sys, json\n"
+        "from musicviz.config import ProjectConfig\n"
+        "from musicviz.render.engine import analyze_project\n"
+        "from musicviz.render.player import run_player\n"
+        f"p = ProjectConfig.model_validate_json({project.model_dump_json()!r})\n"
+        "f = analyze_project(p)\n"
+        "run_player(p, f, start=f.duration - 0.3, with_audio=False)\n"
+        "print('PLAYER_OK')\n"
+    )
+    env = dict(os.environ, MUSICVIZ_NO_CACHE="1")
+    res = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, env=env)
+    if res.returncode != 0 and not sys.platform.startswith("linux"):
+        pytest.skip(f"ventana OpenGL no disponible en este runner: {res.stderr[-300:]}")
+    assert res.returncode == 0 and "PLAYER_OK" in res.stdout, res.stderr[-2000:]

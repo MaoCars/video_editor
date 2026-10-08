@@ -208,3 +208,22 @@ def test_gui_render_and_cancel(app, tmp_path, monkeypatch):
     app._start_render()
     assert _pump(app, lambda: not app._rendering, timeout=120)
     assert (tmp_path / "out.mp4").exists()
+
+
+def test_gui_opens_gl_player_window(app, monkeypatch):
+    """El botón «Ventana GL» lanza el reproductor OpenGL en un proceso aparte y lo cierra al pulsar de nuevo."""
+    import os
+
+    pytest.importorskip("glfw")
+    from musicviz.render.gpu import gpu_available
+
+    if not gpu_available() or not os.environ.get("DISPLAY"):
+        pytest.skip("sin OpenGL o sin pantalla")
+    assert _pump(app, lambda: app._features is not None)
+    app.time_var.set(0.5)
+    app._toggle_player()
+    assert _pump(app, lambda: app._player_proc is not None, timeout=60), "el reproductor no arrancó"
+    proc = app._player_proc
+    assert proc.is_alive() and app.window_btn.cget("text") == "■ Cerrar ventana"
+    app._toggle_player()  # cierra la ventana
+    assert not proc.is_alive() and app._player_proc is None and app.window_btn.cget("text") == "⧉ Ventana GL"
