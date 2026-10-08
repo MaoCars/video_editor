@@ -80,6 +80,54 @@ def layer_box(layer: LayerConfig, project: ProjectConfig, t: float) -> Optional[
     return None
 
 
+def layer_rotation(layer: LayerConfig, t: float) -> float:
+    """Ángulo (grados) con el que se dibuja la capa en t: rotación propia + velocidad + keyframes."""
+    angle = float(current_value(layer, "rotation", t)) if layer.rotation_keys else 0.0
+    if layer.type in ("image", "circle"):
+        angle += float(getattr(layer, "rotation", 0.0)) + float(getattr(layer, "rotation_speed", 0.0)) * t
+    return angle
+
+
+Poly = list[tuple[float, float]]
+
+
+def layer_polygon(layer: LayerConfig, project: ProjectConfig, t: float) -> Optional[Poly]:
+    """Las cuatro esquinas de la capa en coordenadas relativas, giradas como se dibuja (texto e imagen giran
+    alrededor del centro de su caja). Para el resto de capas es el rectángulo de `layer_box`."""
+    box = layer_box(layer, project, t)
+    if box is None:
+        return None
+    x0, y0, x1, y1 = box
+    corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    angle = layer_rotation(layer, t) if layer.type in ("text", "image") else 0.0
+    if abs(angle) < 1e-3:
+        return corners
+    import math
+
+    W, H = project.output.width, project.output.height
+    cx, cy = (x0 + x1) / 2 * W, (y0 + y1) / 2 * H
+    a = math.radians(-angle)  # el render gira en sentido horario positivo (eje y hacia abajo)
+    ca, sa = math.cos(a), math.sin(a)
+    out: Poly = []
+    for px, py in corners:
+        dx, dy = px * W - cx, py * H - cy
+        out.append(((cx + dx * ca - dy * sa) / W, (cy + dx * sa + dy * ca) / H))
+    return out
+
+
+def point_in_polygon(x: float, y: float, poly: Poly) -> bool:
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        xa, ya = poly[i]
+        xb, yb = poly[(i + 1) % n]
+        if (ya > y) != (yb > y):
+            xi = xa + (y - ya) * (xb - xa) / (yb - ya)
+            if x < xi:
+                inside = not inside
+    return inside
+
+
 def hit_layer(project: ProjectConfig, t: float, rx: float, ry: float) -> Optional[int]:
     """Índice de la capa visible más alta bajo el punto (rx, ry); None si no hay ninguna."""
     for i in range(len(project.layers) - 1, -1, -1):
@@ -90,8 +138,8 @@ def hit_layer(project: ProjectConfig, t: float, rx: float, ry: float) -> Optiona
             continue
         if layer.end is not None and t > layer.end:
             continue
-        box = layer_box(layer, project, t)
-        if box and box[0] <= rx <= box[2] and box[1] <= ry <= box[3]:
+        poly = layer_polygon(layer, project, t)
+        if poly and point_in_polygon(rx, ry, poly):
             return i
     return None
 

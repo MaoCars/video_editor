@@ -26,7 +26,7 @@ from ..presets import load_preset, preset_names
 from ..render.canvas import over_checkerboard
 from .fields import FieldSpec, apply_value, field_specs, format_value, replace_submodel
 from .recent import add_recent, clear_recent, load_recent, remove_recent
-from .hittest import ROTATION_FIELD, SIZE_FIELD, hit_layer, layer_box
+from .hittest import ROTATION_FIELD, SIZE_FIELD, hit_layer, layer_polygon
 from .timeline import Timeline
 
 PREVIEW_SCALES = {"Baja (480p)": 480 / 1080, "Media (540p)": 0.5, "Alta (720p)": 720 / 1080}
@@ -1097,16 +1097,19 @@ class App(tk.Tk):
         if self._sel_layer is None or self._sel_layer >= len(self.project.layers):
             return
         layer = self.project.layers[self._sel_layer]
-        box = layer_box(layer, self.project, float(self.time_var.get()))
-        if not box:
+        poly = layer_polygon(layer, self.project, float(self.time_var.get()))
+        if not poly:
             return
-        x0, y0, x1, y1 = (ox + box[0] * dw, oy + box[1] * dh, ox + box[2] * dw, oy + box[3] * dh)
-        self.preview.create_rectangle(x0, y0, x1, y1, outline="#ffffff", dash=(5, 3), width=2, tags="overlay")
-        for cx, cy in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
+        pts = [(ox + px * dw, oy + py * dh) for px, py in poly]
+        flat = [c for pt in pts for c in pt]
+        self.preview.create_polygon(*flat, outline="#ffffff", fill="", dash=(5, 3), width=2, tags="overlay")
+        for cx, cy in pts:
             self.preview.create_rectangle(cx - 3, cy - 3, cx + 3, cy + 3, fill="#ffffff", outline="", tags="overlay")
+        top_x = min(p[0] for p in pts)
+        top_y = min(p[1] for p in pts)
         name = layer.name or layer.type
         extra = "  (keyframe)" if layer.position_keys else ""
-        self.preview.create_text(x0, max(y0 - 4, oy + 2), anchor="sw" if y0 - 4 > oy + 12 else "nw", text=name + extra, fill="#ffffff", font=("TkDefaultFont", 9, "bold"), tags="overlay")
+        self.preview.create_text(top_x, max(top_y - 4, oy + 2), anchor="sw" if top_y - 4 > oy + 12 else "nw", text=name + extra, fill="#ffffff", font=("TkDefaultFont", 9, "bold"), tags="overlay")
 
     # ------------------------------------------------------------------ interacción en la vista previa
     def _pv_to_rel(self, x: float, y: float) -> Optional[tuple[float, float]]:

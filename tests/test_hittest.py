@@ -1,7 +1,7 @@
 import pytest
 
 from musicviz.config import ProjectConfig
-from musicviz.gui.hittest import hit_layer, layer_box
+from musicviz.gui.hittest import hit_layer, layer_box, layer_polygon, layer_rotation, point_in_polygon
 from musicviz.layers.background import fit_image
 import numpy as np
 
@@ -48,3 +48,28 @@ def test_fit_image_focus():
     left = fit_image(img, 100, 100, "cover", (0.0, 0.5))
     right = fit_image(img, 100, 100, "cover", (1.0, 0.5))
     assert left[50, 50, 0] == 255 and right[50, 50, 0] == 0
+
+
+def test_rotated_polygon_and_hit():
+    p = _project(layers=[
+        {"type": "image", "file": "x.png", "size": 0.5, "shape": "original", "aspect": 4.0, "position": [0.5, 0.5], "rotation": 90},
+    ])
+    layer = p.layers[0]
+    assert layer_rotation(layer, 0.0) == 90
+    flat = layer_box(layer, p, 0.0)
+    poly = layer_polygon(layer, p, 0.0)
+    assert len(poly) == 4
+    # sin girar: caja ancha y baja (4:1). Girada 90°: ocupa más en vertical que en horizontal
+    assert (flat[2] - flat[0]) * 1920 > (flat[3] - flat[1]) * 1080 * 3
+    xs = [q[0] * 1920 for q in poly]
+    ys = [q[1] * 1080 for q in poly]
+    assert (max(ys) - min(ys)) > (max(xs) - min(xs)) * 3
+    # el punto que estaba dentro de la caja plana (a la derecha del centro) queda fuera al girar, y viceversa
+    assert hit_layer(p, 0.0, 0.72, 0.5) is None
+    assert hit_layer(p, 0.0, 0.5, 0.7) == 0
+    assert point_in_polygon(0.5, 0.5, poly) and not point_in_polygon(0.0, 0.0, poly)
+    # rotación por keyframes en texto y velocidad de giro en imagen
+    txt = _project(layers=[{"type": "text", "text": "A", "rotation_keys": [{"time": 0, "value": 0}, {"time": 2, "value": 40, "easing": "linear"}]}]).layers[0]
+    assert layer_rotation(txt, 1.0) == pytest.approx(20)
+    spin = _project(layers=[{"type": "image", "file": "x.png", "rotation_speed": 30}]).layers[0]
+    assert layer_rotation(spin, 2.0) == pytest.approx(60)
