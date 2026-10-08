@@ -22,7 +22,7 @@ hiddenimports = (
     + collect_submodules("glcontext")
     + ["moderngl", "glcontext", "glfw", "PIL.ImageTk", "PIL._tkinter_finder", "soundfile", "yaml"]
 )
-excludes = ["tests", "pytest", "matplotlib", "IPython", "jupyter", "notebook", "pandas", "sklearn", "torch", "tensorflow", "scipy", "tkinter.test", "unittest", "pydoc_data", "lib2to3", "setuptools", "pkg_resources", "distutils"]
+excludes = ["tests", "pytest", "matplotlib", "IPython", "jupyter", "notebook", "pandas", "sklearn", "torch", "tensorflow", "scipy", "tkinter.test", "unittest", "pydoc_data", "lib2to3"]
 
 common = dict(
     pathex=[str(ROOT)],
