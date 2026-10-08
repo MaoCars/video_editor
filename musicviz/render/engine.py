@@ -64,8 +64,17 @@ class SceneBase:
                 continue
             yield effect
 
+    def render(self, index: int) -> np.ndarray:  # pragma: no cover - lo implementan los backends
+        raise NotImplementedError
+
+    def render_many(self, indices: Iterable[int]) -> Iterator[np.ndarray]:
+        """Renderiza varios frames en orden. Los backends pueden solapar trabajo entre frames consecutivos."""
+        for i in indices:
+            yield self.render(i)
+
     def close(self) -> None:
-        pass
+        """Libera recursos (hilo de decodificación de video, contexto GL...)."""
+        self.background.close()
 
 
 class Scene(SceneBase):
@@ -186,8 +195,8 @@ def iter_frames(
     if backend == "gpu" or workers <= 1 or len(indices) < 8:
         scene = make_scene(project, features, width, height, backend)
         try:
-            for i in indices:
-                yield scene.render(i).tobytes()
+            for img in scene.render_many(indices):
+                yield img.tobytes()
         finally:
             scene.close()
         return

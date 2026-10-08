@@ -10,6 +10,7 @@ from ..audio.analysis import AudioFeatures, FrameFeatures
 from ..config import BackgroundConfig
 from ..render.canvas import Canvas, RenderContext, fast_blur
 from ..utils.color import gradient, parse_color
+from ..utils.lookahead import Lookahead
 
 
 def load_image_rgba(path: str) -> np.ndarray:
@@ -45,9 +46,35 @@ def fit_image(img: np.ndarray, width: int, height: int, mode: str, focus: tuple[
     return out
 
 
+class _VideoFrame:
+    """Frame de video ya encajado al lienzo, en uint8 y/o float32 (cada versión se deriva de la otra al pedirla)."""
+
+    __slots__ = ("_u8", "_f32")
+
+    def __init__(self, u8: np.ndarray | None, f32: np.ndarray | None):
+        self._u8 = u8
+        self._f32 = f32
+
+    @property
+    def u8(self) -> np.ndarray:
+        if self._u8 is None:
+            assert self._f32 is not None
+            self._u8 = cv2.convertScaleAbs(np.clip(self._f32, 0, 1), alpha=255.0)
+        return self._u8
+
+    @property
+    def f32(self) -> np.ndarray:
+        if self._f32 is None:
+            assert self._u8 is not None
+            self._f32 = np.multiply(self._u8, np.float32(1.0 / 255.0), dtype=np.float32)
+        return self._f32
+
+
 class VideoSource:
     """Lee frames de un video por tiempo. Lee en secuencia cuando los frames son consecutivos
     (lo habitual, porque cada proceso renderiza bloques de frames seguidos) y busca sólo si hay saltos."""
+
+    MAX_SKIP = 8  # saltos hacia delante hasta este tamaño se leen de seguido; más lejos se busca
 
     def __init__(self, path: str):
         self.path = path
@@ -83,7 +110,13 @@ class VideoSource:
         idx = min(max(idx, 0), self.n_frames - 1)
         if idx == self._last_index and self._last_frame is not None:
             return self._last_frame
-        if idx != self._last_index + 1:
+        gap = idx - self._last_index
+        if 1 < gap <= self.MAX_SKIP:
+            # saltos cortos (video a más fps que el proyecto, velocidad > 1): descartar frames sin decodificar del todo
+            for _ in range(gap - 1):
+                if not self.cap.grab():
+                    break
+        elif gap != 1:
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         ok, bgr = self.cap.read()
         if not ok:
@@ -112,7 +145,10 @@ class Background:
         self.base: np.ndarray | None = None
         self.ctx: RenderContext | None = None
         self.video: VideoSource | None = None
-        self._video_cache: tuple[int, np.ndarray] | None = None
+        self._video_cache: tuple[int, _VideoFrame] | None = None
+        self._lookahead: Lookahead[int, _VideoFrame] | None = None
+        self._n_frames = 0
+        self.wants_float = True  # el backend CPU compone en float; el GPU lo pone a False y usa el uint8
         self._grad_index: np.ndarray | None = None  # posición 0..255 de cada píxel en el gradiente
         self._section_cache: tuple[bytes, np.ndarray] | None = None
 
@@ -154,6 +190,8 @@ class Background:
             if not cfg.video:
                 raise ValueError("background.type=video requiere background.video")
             self.video = VideoSource(cfg.video)
+            self._lookahead = Lookahead(self._decode_video_frame)
+            self._n_frames = ctx.n_frames
             base = np.zeros((h, w, 3), np.float32)
         else:  # pragma: no cover
             raise ValueError(cfg.type)
@@ -161,22 +199,46 @@ class Background:
             base = base * (1.0 - cfg.darken)
         self.base = np.ascontiguousarray(base, dtype=np.float32)
 
-    def _video_frame(self, frame: FrameFeatures) -> np.ndarray:
+    def _decode_video_frame(self, index: int) -> "_VideoFrame":
+        """Decodifica, encaja y procesa el frame de video que corresponde al frame `index` del proyecto."""
         assert self.video is not None and self.ctx is not None
         cfg = self.cfg
+        t = cfg.video_start + (index / self.ctx.fps) * cfg.video_speed
+        rgb = self.video.frame_at(t, cfg.video_loop)
+        fitted = fit_image(rgb, self.ctx.width, self.ctx.height, cfg.image_fit, cfg.focus)
+        if cfg.blur > 0:
+            img = np.multiply(fitted, np.float32(1.0 / 255.0), dtype=np.float32)
+            img = fast_blur(img, self.ctx.px(cfg.blur))
+            if cfg.darken > 0:
+                img *= np.float32(1.0 - cfg.darken)
+            return _VideoFrame(u8=None, f32=img)
+        if cfg.darken > 0:
+            fitted = cv2.convertScaleAbs(fitted, alpha=1.0 - cfg.darken)
+        vf = _VideoFrame(u8=fitted, f32=None)
+        if self.wants_float:
+            vf.f32  # noqa: B018 - se calcula ya, en el hilo auxiliar, para que el principal no lo haga
+        return vf
+
+    def _video_frame(self, frame: FrameFeatures) -> "_VideoFrame":
+        """Frame de video del instante actual. El siguiente se decodifica ya en un hilo auxiliar mientras
+        el hilo principal dibuja las capas y codifica: en un render secuencial casi siempre está listo."""
+        assert self._lookahead is not None
         if self._video_cache is not None and self._video_cache[0] == frame.index:
             return self._video_cache[1]
-        t = cfg.video_start + frame.time * cfg.video_speed
-        rgb = self.video.frame_at(t, cfg.video_loop)
-        rgba = cv2.cvtColor(rgb, cv2.COLOR_RGB2RGBA)
-        fitted = fit_image(rgba, self.ctx.width, self.ctx.height, cfg.image_fit, cfg.focus)
-        img = fitted[..., :3].astype(np.float32) * np.float32(1.0 / 255.0)
-        if cfg.blur > 0:
-            img = fast_blur(img, self.ctx.px(cfg.blur))
-        if cfg.darken > 0:
-            img *= np.float32(1.0 - cfg.darken)
-        self._video_cache = (frame.index, img)
-        return img
+        vf = self._lookahead.get(frame.index)
+        self._video_cache = (frame.index, vf)
+        if frame.index + 1 < self._n_frames:
+            self._lookahead.schedule(frame.index + 1)
+        return vf
+
+    def close(self) -> None:
+        """Detiene el hilo de decodificación y libera el video."""
+        if self._lookahead is not None:
+            self._lookahead.close()
+            self._lookahead = None
+        if self.video is not None:
+            self.video.release()
+            self.video = None
 
     def _section_base(self, stops: np.ndarray) -> np.ndarray:
         """Fondo sólido/gradiente/radial recoloreado con la paleta de la sección (con caché)."""
@@ -204,10 +266,17 @@ class Background:
         """Imagen base float32 RGB del frame (video, fondo recoloreado por sección o base fija)."""
         assert self.base is not None
         if self.video is not None:
-            return self._video_frame(frame)
+            return self._video_frame(frame).f32
         if section_colors is not None:
             return self._section_base(section_colors)
         return self.base
+
+    def source_u8(self, frame: FrameFeatures, section_colors: np.ndarray | None = None) -> np.ndarray:
+        """Como `source` pero RGB uint8 (lo que sube el backend GPU como textura, sin pasar por float)."""
+        if self.video is not None:
+            return self._video_frame(frame).u8
+        src = self.source(frame, section_colors)
+        return cv2.convertScaleAbs(np.clip(src, 0, 1), alpha=255.0)
 
     def motion(self, frame: FrameFeatures) -> tuple[float, float, float, float, float]:
         """(zoom, dx, dy, ángulo en grados, ganancia de brillo) del frame (compartido CPU/GPU)."""

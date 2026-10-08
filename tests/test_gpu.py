@@ -121,3 +121,28 @@ def test_no_gpu_env_forces_cpu(audio_cfg, features, monkeypatch):
             resolve_backend("gpu")
     finally:
         gpu_available.cache_clear()
+
+
+def test_render_many_matches_render(audio_cfg, features, tmp_path):
+    """La lectura asíncrona con PBOs (doble búfer) devuelve exactamente los mismos frames y en orden."""
+    import subprocess
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg no disponible")
+    clip = tmp_path / "clip.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=64x36:r=30:d=2", "-pix_fmt", "yuv420p", str(clip)], check=True)
+    layers = [{"type": "bars", "glow": 0.3}, {"type": "particles", "count": 30}, {"type": "text", "text": "PBO", "position": [0.5, 0.2]}]
+    effects = [{"type": "bloom"}, {"type": "glitch", "trigger": "always"}]
+    for transparent in (False, True):
+        project = _project(audio_cfg, background={"type": "video", "video": str(clip), "pulse": 0.1}, layers=layers, effects=effects)
+        project.output.transparent = transparent
+        gpu = make_scene(project, features, W, H, "gpu")
+        try:
+            idx = [0, 1, 2, 3, 4, 30, 31, 32]
+            many = list(gpu.render_many(idx))
+            single = [gpu.render(i) for i in idx]
+            assert len(many) == len(idx) and many[0].shape == (H, W, 4 if transparent else 3)
+            assert all(np.array_equal(a, b) for a, b in zip(many, single))
+            assert list(gpu.render_many([7]))[0].shape == many[0].shape
+        finally:
+            gpu.close()

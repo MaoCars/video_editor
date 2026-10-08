@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import math
-from typing import Optional
+from typing import Iterable, Iterator, Optional
 
 import cv2
 import moderngl
@@ -78,6 +78,7 @@ class GpuScene(SceneBase):
         self._tex_cache: dict = {}
         self._bg_tex: Optional[moderngl.Texture] = None
         self._bg_key = None
+        self.background.wants_float = False  # el video de fondo se sube como textura uint8 directamente
         gl.disable(moderngl.DEPTH_TEST)
         gl.disable(moderngl.CULL_FACE)
 
@@ -194,15 +195,14 @@ class GpuScene(SceneBase):
     # ------------------------------------------------------------------ fondo
     def _draw_background(self, frame: FrameFeatures, section_colors) -> None:
         bg = self.background
-        src = bg.source(frame, section_colors)
         key = ("video", frame.index) if bg.video is not None else ("sec", section_colors.tobytes() if section_colors is not None else b"")
         if self._bg_tex is None or key != self._bg_key:
-            data = cv2.convertScaleAbs(np.clip(src, 0, 1), alpha=255.0)
+            data = np.ascontiguousarray(bg.source_u8(frame, section_colors))
             if self._bg_tex is None:
-                self._bg_tex = self.gl.texture((self.w, self.h), 3, np.ascontiguousarray(data).tobytes())
+                self._bg_tex = self.gl.texture((self.w, self.h), 3, data)
                 self._bg_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
             else:
-                self._bg_tex.write(np.ascontiguousarray(data).tobytes())
+                self._bg_tex.write(data)
             self._bg_key = key
         zoom, dx, dy, angle, gain = bg.motion(frame)
         self.gl.disable(moderngl.BLEND)
@@ -558,9 +558,46 @@ class GpuScene(SceneBase):
     # ------------------------------------------------------------------ frame
     def render(self, index: int) -> np.ndarray:
         with GL_LOCK:
-            return self._render(index)
+            self._render_to_final(index)
+            comps = self.channels
+            data = self.final_fbo.read(components=comps, dtype="f1")
+        return np.frombuffer(data, np.uint8).reshape(self.h, self.w, comps)
 
-    def _render(self, index: int) -> np.ndarray:
+    def render_many(self, indices: Iterable[int]) -> Iterator[np.ndarray]:
+        """Render secuencial con lectura asíncrona: el frame N se copia a un PBO y se recoge mientras la GPU
+        ya dibuja el frame N+1, así la CPU no espera a la GPU en cada frame (doble búfer)."""
+        indices = list(indices)
+        if len(indices) < 2:
+            for i in indices:
+                yield self.render(i)
+            return
+        comps = self.channels
+        size = self.w * self.h * comps
+        with GL_LOCK:
+            pbos = [self.gl.buffer(reserve=size) for _ in range(2)]
+        try:
+            prev: Optional[moderngl.Buffer] = None
+            for n, i in enumerate(indices):
+                pbo = pbos[n % 2]
+                with GL_LOCK:
+                    self._render_to_final(i)
+                    self.final_fbo.read_into(pbo, components=comps, dtype="f1")
+                    if prev is not None:
+                        data = prev.read()  # espera sólo a la lectura del frame anterior
+                if prev is not None:
+                    yield np.frombuffer(data, np.uint8).reshape(self.h, self.w, comps)
+                prev = pbo
+            if prev is not None:
+                with GL_LOCK:
+                    data = prev.read()
+                yield np.frombuffer(data, np.uint8).reshape(self.h, self.w, comps)
+        finally:
+            if getattr(self, "gl", None) is not None:
+                with GL_LOCK:
+                    for pbo in pbos:
+                        pbo.release()
+
+    def _render_to_final(self, index: int) -> None:
         frame, section = self.frame_state(index)
         self.canvas_fbo.use()
         self.canvas_fbo.clear(0.0, 0.0, 0.0, 0.0)
@@ -574,12 +611,10 @@ class GpuScene(SceneBase):
         self.final_fbo.use()
         self.gl.disable(moderngl.BLEND)
         self._fullscreen(self.p_final, self._cur.color_attachments[0], u_alpha_mode=1 if self.transparent else 0)
-        comps = 4 if self.transparent else 3
-        data = self.final_fbo.read(components=comps, dtype="f1")
-        return np.frombuffer(data, np.uint8).reshape(self.h, self.w, comps)
 
     def close(self) -> None:
         """Libera los recursos GL. Debe llamarse desde el hilo que creó la escena."""
+        super().close()
         if getattr(self, "gl", None) is None:
             return
         with GL_LOCK:

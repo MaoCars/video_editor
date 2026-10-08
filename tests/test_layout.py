@@ -314,3 +314,48 @@ def test_video_background_render(audio_cfg, features, clip):
 
     idx = list(range(0, 24))
     assert list(iter_frames(project, features, W, H, idx, workers=1)) == list(iter_frames(project, features, W, H, idx, workers=2))
+
+
+def test_video_source_short_gaps_read_through(clip):
+    from musicviz.layers.background import VideoSource
+
+    src = VideoSource(clip)
+    # proyecto a 10 fps sobre un video a 30: saltos de 3 frames, se leen de seguido sin buscar
+    seen = [src.frame_at(i / 10.0, loop=False) for i in range(20)]
+    assert all(f[0, 0, 0] > 150 for f in seen[:10]) and all(f[0, 0, 1] > 100 for f in seen[10:])
+    assert src._last_index == 57
+    src.release()
+
+
+def test_lookahead_matches_direct_calls():
+    from musicviz.utils.lookahead import Lookahead
+
+    calls = []
+
+    def fn(k):
+        calls.append(k)
+        return k * 2
+
+    la = Lookahead(fn)
+    assert la.get(0) == 0
+    la.schedule(1)
+    assert la.get(1) == 2  # acierto: calculado en el hilo auxiliar
+    la.schedule(2)
+    assert la.get(5) == 10  # fallo: se descarta el 2 y se calcula el 5 aquí
+    la.schedule(6)
+    la.schedule(6)  # repetido: no se lanza dos veces
+    assert la.get(6) == 12
+    la.close()
+    assert la.hits == 2 and la.misses == 2 and sorted(calls) == [0, 1, 2, 5, 6]
+
+
+def test_video_prefetch_matches_and_releases(audio_cfg, features, clip):
+    project = _project(audio_cfg, background={"type": "video", "video": clip, "video_loop": True, "blur": 2, "darken": 0.2}, layers=[])
+    scene = Scene(project, features, W, H)
+    direct = [Scene(project, features, W, H).render(i) for i in (0, 1, 2, 3, 40, 41)]
+    many = list(scene.render_many([0, 1, 2, 3, 40, 41]))
+    assert all(np.array_equal(a, b) for a, b in zip(direct, many))
+    la = scene.background._lookahead
+    assert la is not None and la.hits >= 3
+    scene.close()
+    assert scene.background.video is None and scene.background._lookahead is None

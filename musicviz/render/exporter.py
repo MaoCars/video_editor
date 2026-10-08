@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import shutil
 import subprocess
 import threading
@@ -174,6 +175,53 @@ class ExportResult:
         return self.frames / self.seconds if self.seconds > 0 else 0.0
 
 
+class _PipeWriter:
+    """Escribe los frames en la entrada de ffmpeg desde un hilo, con una cola corta, para que el render
+    no se detenga cada vez que el codificador tarda en vaciar la tubería."""
+
+    def __init__(self, pipe, depth: int = 4):
+        self.pipe = pipe
+        self.queue: "queue.Queue[Optional[bytes]]" = queue.Queue(maxsize=depth)
+        self.error: Optional[BaseException] = None
+        self.thread = threading.Thread(target=self._run, name="ffmpeg-writer", daemon=True)
+        self.thread.start()
+
+    def _run(self) -> None:
+        while True:
+            data = self.queue.get()
+            if data is None:
+                break
+            if self.error is not None:
+                continue  # tras un fallo se vacía la cola para no bloquear al productor
+            try:
+                self.pipe.write(data)
+            except Exception as exc:  # noqa: BLE001
+                self.error = exc
+
+    def write(self, data: bytes) -> None:
+        if self.error is not None:
+            raise self.error
+        self.queue.put(data)
+
+    def close(self) -> None:
+        """Termina de escribir lo encolado y relanza el error del hilo, si lo hubo."""
+        self.queue.put(None)
+        self.thread.join()
+        if self.error is not None:
+            raise self.error
+
+    def abort(self) -> None:
+        """Detiene el hilo descartando lo que quede en la cola (cancelación o error)."""
+        if not self.thread.is_alive():
+            return
+        self.error = self.error or ExportCancelled("escritura abortada")
+        try:
+            self.queue.put_nowait(None)
+        except queue.Full:
+            pass
+        self.thread.join(timeout=5.0)
+
+
 def export_video(
     project: ProjectConfig,
     features: AudioFeatures,
@@ -239,23 +287,32 @@ def export_video(
     done = 0
     cancelled = False
     frames = iter_frames(project, features, width, height, indices, workers=workers)
+    writer = _PipeWriter(proc.stdin)
     try:
         for data in frames:
             if cancel is not None and cancel.is_set():
                 cancelled = True
                 break
-            proc.stdin.write(data)
+            writer.write(data)
             done += 1
             if progress and (done % 10 == 0 or done == n):
                 progress(done, n)
-    except BrokenPipeError as exc:
+        writer.close()
+    except (BrokenPipeError, OSError) as exc:
         frames.close()
+        writer.abort()
         _, err = proc.communicate()
         raise ExportError(f"ffmpeg cerró la entrada: {err.decode(errors='ignore').strip()}") from exc
+    except BaseException:  # error de render: no dejar ffmpeg ni el hilo escritor colgados
+        proc.kill()
+        writer.abort()
+        proc.communicate()
+        raise
     finally:
         frames.close()  # termina el pool de procesos si quedó a medias
     if cancelled:
         proc.kill()
+        writer.abort()
         proc.communicate()
         try:
             if out_path.is_dir():
