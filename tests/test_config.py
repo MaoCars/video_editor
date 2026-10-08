@@ -54,3 +54,13 @@ def test_yaml_roundtrip():
     project = load_preset("trap_nation", "song.mp3")
     again = ProjectConfig.model_validate(yaml.safe_load(project.to_yaml()))
     assert again == project
+
+
+def test_presets_accept_windows_paths():
+    audio = r"C:\\Users\\mauro\\Música\\Unión {x} \"rara\".mp3"
+    out = r"D:\\Videos\\salida.mp4"
+    for name in preset_names():
+        project = load_preset(name, audio, out)
+        assert project.audio.file == audio and project.output.path == out
+        again = ProjectConfig.model_validate(yaml.safe_load(preset_yaml(name, audio, out)))
+        assert again.audio.file == audio and again.output.path == out

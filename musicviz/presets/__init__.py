@@ -1,6 +1,7 @@
 """Presets incluidos (archivos YAML con `{audio}` como marcador del archivo de audio)."""
 from __future__ import annotations
 
+import json
 from importlib import resources
 from pathlib import Path
 
@@ -26,8 +27,17 @@ def preset_description(name: str) -> str:
     return " ".join(lines)
 
 
+def _yaml_str(value: str) -> str:
+    """Cadena entre comillas dobles válida en YAML (escapa barras invertidas de rutas Windows, comillas, etc.)."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _with_audio(name: str, audio: str) -> str:
+    return preset_text(name).replace('"{audio}"', _yaml_str(audio)).replace("{audio}", _yaml_str(audio))
+
+
 def load_preset(name: str, audio: str, output: str | None = None) -> ProjectConfig:
-    data = yaml.safe_load(preset_text(name).replace("{audio}", audio))
+    data = yaml.safe_load(_with_audio(name, audio))
     if output:
         data.setdefault("output", {})["path"] = output
     return ProjectConfig.model_validate(data)
@@ -35,7 +45,7 @@ def load_preset(name: str, audio: str, output: str | None = None) -> ProjectConf
 
 def preset_yaml(name: str, audio: str, output: str | None = None) -> str:
     """Texto YAML del preset con el audio sustituido (conserva los comentarios)."""
-    text = preset_text(name).replace("{audio}", audio)
+    text = _with_audio(name, audio)
     if output:
-        text = text.replace("output:\n", f"output:\n  path: {output}\n", 1)
+        text = text.replace("output:\n", f"output:\n  path: {_yaml_str(output)}\n", 1)
     return text
