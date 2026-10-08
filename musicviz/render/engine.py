@@ -129,8 +129,20 @@ def output_size(project: ProjectConfig, scale: float = 1.0) -> tuple[int, int]:
     return max(w - w % 2, 2), max(h - h % 2, 2)
 
 
-def analyze_project(project: ProjectConfig) -> AudioFeatures:
-    return analyze(project.audio, fps=float(project.output.fps))
+def analyze_project(project: ProjectConfig, use_cache: bool = True) -> AudioFeatures:
+    """Analiza el audio del proyecto, reutilizando la caché en disco si el archivo y los parámetros no cambiaron."""
+    from ..audio import cache
+    from ..audio.analysis import DEFAULT_SR
+
+    fps = float(project.output.fps)
+    if use_cache:
+        cached = cache.load(project.audio, fps, DEFAULT_SR)
+        if cached is not None:
+            return cached
+    features = analyze(project.audio, fps=fps)
+    if use_cache:
+        cache.store(project.audio, fps, DEFAULT_SR, features)
+    return features
 
 
 def default_workers() -> int:

@@ -26,6 +26,7 @@ from ..presets import load_preset, preset_names
 from ..render.canvas import over_checkerboard
 from .fields import FieldSpec, apply_value, field_specs, format_value, replace_submodel
 from .recent import add_recent, clear_recent, load_recent, remove_recent
+from .renderer import RenderService
 from .hittest import ROTATION_FIELD, SIZE_FIELD, hit_layer, layer_polygon
 from .timeline import Timeline
 
@@ -355,6 +356,7 @@ class App(tk.Tk):
         self.dirty = False
         self._features: Optional[AudioFeatures] = None
         self._features_key: Optional[str] = None
+        self.renderer = RenderService(on_error=lambda msg: self._queue.put(("error", msg)))
         self._queue: "queue.Queue[tuple[str, Any]]" = queue.Queue()
         self._preview_busy = False
         self._preview_pending = False
@@ -1025,38 +1027,42 @@ class App(tk.Tk):
             self.preview.delete("img", "overlay")
             self.preview.itemconfigure("hint", state="normal")
             return
-        if self._preview_busy:
-            self._preview_pending = True
-            return
-        self._preview_busy = True
         project = self.project.model_copy(deep=True)
         t = float(self.time_var.get())
         scale = min(PREVIEW_SCALES[self.scale_var.get()], 0.3) if self._quick_preview else PREVIEW_SCALES[self.scale_var.get()]
-        threading.Thread(target=self._preview_worker, args=(project, t, scale), daemon=True).start()
+        self._preview_busy = True
 
-    def _preview_worker(self, project: ProjectConfig, t: float, scale: float):
-        try:
-            from ..render.engine import render_frame_image
+        def job(svc: RenderService):
+            try:
+                feats = self._service_features(svc, project)
+                scene = svc.scene_for(project, scale)
+                img = scene.render(int(round(t * feats.fps)))
+                self._queue.put(("preview", img))
+            finally:
+                self._queue.put(("preview_done", None))
 
-            feats = self._get_features_for(project)
-            img = render_frame_image(project, feats, t, scale)
-            self._queue.put(("preview", img))
-        except Exception as exc:  # noqa: BLE001
-            self._queue.put(("error", f"Vista previa: {exc}"))
-            traceback.print_exc()
-        finally:
-            self._queue.put(("preview_done", None))
+        self.renderer.submit(job, key="preview")  # sólo importa la última vista previa pedida
+
+    def _service_features(self, svc: RenderService, project: ProjectConfig) -> AudioFeatures:
+        """Características del audio desde el hilo de render (analiza o usa la caché si hace falta)."""
+        return svc.features_for(
+            project,
+            on_analyzing=lambda: self._queue.put(("status", "Analizando audio…")),
+            on_ready=lambda feats: self._queue.put(("features", feats)),
+        )
 
     def _get_features_for(self, project: ProjectConfig) -> AudioFeatures:
+        """Características para hilos ajenos al de render (exportación): reutiliza las del servicio o analiza."""
+        feats = self.renderer.features
         key = project.audio.model_dump_json() + f"|{project.output.fps}"
-        if self._features is None or key != self._features_key:
-            from ..render.engine import analyze_project
+        if feats is not None and self._features_key == key:
+            return feats
+        from ..render.engine import analyze_project
 
-            self._queue.put(("status", "Analizando audio…"))
-            feats = analyze_project(project)
-            self._features, self._features_key = feats, key
-            self._queue.put(("features", feats))
-        return self._features
+        self._queue.put(("status", "Analizando audio…"))
+        feats = analyze_project(project)
+        self._queue.put(("features", feats))
+        return feats
 
     def _show_image(self, img: np.ndarray):
         if img.shape[2] == 4:
@@ -1296,8 +1302,7 @@ class App(tk.Tk):
         project = self.project.model_copy(deep=True)
         start = float(self.time_var.get())
         scale = min(PREVIEW_SCALES[self.scale_var.get()], 0.5)
-        self._play_thread = threading.Thread(target=self._play_worker, args=(project, start, scale), daemon=True)
-        self._play_thread.start()
+        self.renderer.submit(lambda svc: self._play_job(svc, project, start, scale), key="play")
 
     def _stop_play(self):
         self._playing = False
@@ -1309,13 +1314,11 @@ class App(tk.Tk):
             pass
         self.play_btn.configure(text="▶ Reproducir")
 
-    def _play_worker(self, project: ProjectConfig, start: float, scale: float):
+    def _play_job(self, svc: RenderService, project: ProjectConfig, start: float, scale: float):
+        """Reproducción en el hilo de render: reutiliza la escena en caché y sincroniza con el reloj (y el audio)."""
         try:
-            from ..render.engine import make_scene, output_size
-
-            feats = self._get_features_for(project)
-            w, h = output_size(project, scale)
-            scene = make_scene(project, feats, w, h)
+            feats = self._service_features(svc, project)
+            scene = svc.scene_for(project, scale)
             audio_ok = False
             try:
                 import sounddevice as sd
@@ -1327,8 +1330,6 @@ class App(tk.Tk):
             t0 = time.perf_counter()
             last_frame = -1
             while self._playing:
-                if not self._playing:
-                    break
                 t = start + (time.perf_counter() - t0)
                 if t >= feats.duration:
                     break
@@ -1345,10 +1346,6 @@ class App(tk.Tk):
             self._queue.put(("error", f"Reproducción: {exc}"))
             traceback.print_exc()
         finally:
-            try:
-                scene.close()  # type: ignore[name-defined]
-            except Exception:  # noqa: BLE001
-                pass
             self._queue.put(("play_end", None))
 
     # ------------------------------------------------------------------ render
@@ -1410,6 +1407,8 @@ class App(tk.Tk):
                 if kind == "status":
                     self._set_status(payload)
                 elif kind == "features":
+                    self._features = payload
+                    self._features_key = self.project.audio.model_dump_json() + f"|{self.project.output.fps}"
                     self.time_scale.configure(to=max(payload.duration, 0.1))
                     self._update_time_label()
                     self._refresh_timeline()
@@ -1490,6 +1489,7 @@ class App(tk.Tk):
         if not self._confirm_discard():
             return
         self._stop_play()
+        self.renderer.shutdown()
         self.destroy()
 
 

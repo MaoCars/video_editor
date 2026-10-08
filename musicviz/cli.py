@@ -215,6 +215,21 @@ def sections(
     console.print(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), highlight=False)
 
 
+@app.command(name="cache")
+def cache_cmd(clear: bool = typer.Option(False, "--clear", help="Borra la caché de análisis de audio.")):
+    """Muestra (o borra) la caché de análisis de audio que acelera la apertura de proyectos."""
+    from .audio import cache
+
+    d = cache.cache_dir()
+    if clear:
+        n = cache.clear()
+        console.print(f"Caché borrada: {n} archivos en {d}")
+        return
+    files = list(d.glob("*.npz")) if d.is_dir() else []
+    size = sum(f.stat().st_size for f in files) / 1048576
+    console.print(f"Caché de análisis: {d}\n{len(files)} canciones · {size:.1f} MB  (musicviz cache --clear para vaciarla)")
+
+
 @app.command()
 def fonts(filter: Optional[str] = typer.Argument(None, help="Texto para filtrar por nombre.")):
     """Lista las fuentes del sistema que puedes usar en las capas de texto (campo `font`)."""
