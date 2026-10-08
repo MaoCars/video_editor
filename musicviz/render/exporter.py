@@ -41,7 +41,7 @@ def _bundled_dirs() -> list[Path]:
 
 
 def find_tool(name: str) -> Optional[str]:
-    """Busca ffmpeg/ffprobe junto a la app y, si no, en el PATH."""
+    """Busca ffmpeg junto a la app (carpeta bin/) y, si no, en el PATH."""
     exe = f"{name}.exe" if os.name == "nt" else name
     for d in _bundled_dirs():
         candidate = d / exe

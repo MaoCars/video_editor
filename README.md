@@ -20,7 +20,7 @@ En la pestaña **Actions** del repositorio (o en **Releases** cuando haya una ve
 `musicviz-<versión>-windows-x64.zip`, generado automáticamente en cada cambio de `main`. Descomprímelo donde
 quieras y haz doble clic en `musicviz-gui.exe`. Incluye Python, todas las librerías y ffmpeg (carpeta `bin`),
 así que no hay nada más que instalar. `musicviz.exe` es la versión de línea de comandos (`musicviz.exe check`,
-`musicviz.exe render proyecto.yaml`...). Pesa unos 400 MB descomprimido.
+`musicviz.exe render proyecto.yaml`...). Pesa unos 170 MB comprimido.
 
 Para crear el ejecutable tú mismo: `build_exe.bat` (o `python packaging/build.py --ffmpeg --zip`).
 

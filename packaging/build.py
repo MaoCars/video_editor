@@ -18,7 +18,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist" / "musicviz"
-FFMPEG_WIN_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip"
+FFMPEG_WIN_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"  # ~80 MB menos que el build completo
+FFMPEG_WIN_FALLBACK = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip"
 
 
 def version() -> str:
@@ -46,20 +47,25 @@ def add_ffmpeg() -> None:
     bin_dir.mkdir(parents=True, exist_ok=True)
     if platform.system() == "Windows":
         print("Descargando ffmpeg para Windows...")
-        data = urllib.request.urlopen(FFMPEG_WIN_URL, timeout=600).read()
+        try:
+            data = urllib.request.urlopen(FFMPEG_WIN_URL, timeout=600).read()
+            source = "gyan.dev (release essentials)"
+        except Exception as exc:  # noqa: BLE001
+            print("  fallo al descargar de gyan.dev:", exc, "- probando BtbN")
+            data = urllib.request.urlopen(FFMPEG_WIN_FALLBACK, timeout=600).read()
+            source = "BtbN/FFmpeg-Builds (gpl)"
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             for member in zf.namelist():
                 name = member.rsplit("/", 1)[-1]
-                if name in ("ffmpeg.exe", "ffprobe.exe"):
+                if name == "ffmpeg.exe":  # sólo ffmpeg: ffprobe no es necesario
                     (bin_dir / name).write_bytes(zf.read(member))
-                    print("  incluido", name)
-        (bin_dir / "LICENCIA-ffmpeg.txt").write_text("ffmpeg (build GPL de BtbN/FFmpeg-Builds): https://github.com/BtbN/FFmpeg-Builds — licencia GPL.\n", encoding="utf-8")
+                    print("  incluido", name, "de", source)
+        (bin_dir / "LICENCIA-ffmpeg.txt").write_text(f"ffmpeg incluido desde {source}; licencia GPL. Fuentes: https://ffmpeg.org\n", encoding="utf-8")
     else:
-        for tool in ("ffmpeg", "ffprobe"):
-            path = shutil.which(tool)
-            if path:
-                shutil.copy2(path, bin_dir / tool)
-                print("  copiado", tool, "desde", path)
+        path = shutil.which("ffmpeg")
+        if path:
+            shutil.copy2(path, bin_dir / "ffmpeg")
+            print("  copiado ffmpeg desde", path)
 
 
 def make_zip() -> Path:

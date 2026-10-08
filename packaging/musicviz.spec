@@ -18,9 +18,9 @@ datas += collect_data_files("glcontext")
 hiddenimports = (
     collect_submodules("musicviz")
     + collect_submodules("glcontext")
-    + ["moderngl", "glcontext", "PIL.ImageTk", "PIL._tkinter_finder", "soundfile", "scipy.ndimage", "scipy.signal", "yaml"]
+    + ["moderngl", "glcontext", "PIL.ImageTk", "PIL._tkinter_finder", "soundfile", "yaml"]
 )
-excludes = ["tests", "pytest", "matplotlib", "IPython", "jupyter", "notebook", "pandas", "sklearn", "torch", "tensorflow"]
+excludes = ["tests", "pytest", "matplotlib", "IPython", "jupyter", "notebook", "pandas", "sklearn", "torch", "tensorflow", "scipy", "tkinter.test", "unittest", "pydoc_data", "lib2to3", "setuptools", "pkg_resources", "distutils"]
 
 common = dict(
     pathex=[str(ROOT)],

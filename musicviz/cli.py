@@ -173,11 +173,7 @@ def preview(
 
     cfg = _load_project(project)
     features = _analyze(cfg)
-    try:
-        run_preview(cfg, features, scale=scale, start=start, with_audio=not no_audio)
-    except RuntimeError as exc:
-        console.print(f"[red]{exc}[/red]")
-        raise typer.Exit(1)
+    run_preview(cfg, features, scale=scale, start=start, with_audio=not no_audio)
 
 
 @app.command()
@@ -284,7 +280,7 @@ def check():
     try:
         import cv2
 
-        table.add_row("OpenCV", f"{cv2.__version__} ({'con ventanas' if hasattr(cv2, 'imshow') else 'headless'})")
+        table.add_row("OpenCV", cv2.__version__)
     except ImportError:
         table.add_row("OpenCV", "[red]no instalado[/red]")
     try:

@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from scipy.ndimage import gaussian_filter1d
 
 from ..config import AudioConfig
 from ..utils.mathx import attack_release, decay_envelope, moving_average, normalize_percentile
@@ -52,32 +51,12 @@ def load_audio(path: str | Path, sr: int = DEFAULT_SR, start: float = 0.0, durat
     data, file_sr = sf.read(str(path), dtype="float32", always_2d=True)
     mono = data.mean(axis=1)
     if file_sr != sr:
-        from scipy.signal import resample_poly
-        from math import gcd
-
-        g = gcd(int(sr), int(file_sr))
-        mono = resample_poly(mono, sr // g, file_sr // g).astype(np.float32)
+        # Remuestreo lineal (sólo en el camino de respaldo sin ffmpeg; suficiente para el análisis)
+        n_out = int(round(len(mono) * sr / file_sr))
+        mono = np.interp(np.linspace(0.0, len(mono) - 1, n_out), np.arange(len(mono)), mono).astype(np.float32)
     s0 = int(start * sr)
     s1 = len(mono) if duration is None else min(len(mono), s0 + int(duration * sr))
     return np.ascontiguousarray(mono[s0:s1], dtype=np.float32)
-
-
-def probe_duration(path: str | Path) -> Optional[float]:
-    from ..render.exporter import find_tool
-
-    ffprobe = find_tool("ffprobe")
-    if not ffprobe:
-        return None
-    proc = subprocess.run(
-        [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    try:
-        return float(proc.stdout.decode().strip())
-    except ValueError:
-        return None
 
 
 # --------------------------------------------------------------------------- estructuras
@@ -220,6 +199,20 @@ def _frame_matrix(signal: np.ndarray, n_frames: int, hop: float, fft_size: int) 
     return padded[idx]
 
 
+def gaussian_smooth_axis1(x: np.ndarray, sigma: float) -> np.ndarray:
+    """Suavizado gaussiano a lo largo del eje 1 con bordes replicados (equivale a scipy gaussian_filter1d mode='nearest')."""
+    radius = max(int(np.ceil(sigma * 4.0)), 1)
+    k = np.exp(-0.5 * (np.arange(-radius, radius + 1) / sigma) ** 2).astype(np.float32)
+    k /= k.sum()
+    padded = np.pad(x, ((0, 0), (radius, radius)), mode="edge")
+    out = np.empty_like(x, dtype=np.float32)
+    out[:] = 0.0
+    n = x.shape[1]
+    for i, w in enumerate(k):
+        out += w * padded[:, i : i + n]
+    return out
+
+
 def _pick_peaks(strength: np.ndarray, fps: float, sensitivity: float, min_interval: float) -> np.ndarray:
     """Detección de picos: máximo local por encima de la media móvil + umbral adaptativo."""
     n = len(strength)
@@ -299,7 +292,7 @@ def analyze(cfg: AudioConfig, fps: float, waveform: Optional[np.ndarray] = None,
         bands_norm = np.clip((bands_db - floor) / max(ceil_global - floor, 1e-6), 0.0, 1.0).astype(np.float32)
     bands_norm = np.clip(bands_norm * cfg.gain, 0.0, 1.0) ** float(cfg.gamma)
     if cfg.spatial_smoothing > 0 and cfg.bands > 2:
-        bands_norm = gaussian_filter1d(bands_norm, cfg.spatial_smoothing, axis=1, mode="nearest").astype(np.float32)
+        bands_norm = gaussian_smooth_axis1(bands_norm, cfg.spatial_smoothing)
     spectrum = attack_release(bands_norm, cfg.smoothing.attack, cfg.smoothing.release)
 
     # ---- energía por rangos
