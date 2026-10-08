@@ -16,3 +16,6 @@ venv/
 *.m4a
 !examples/*.yaml
 .cache/
+build/
+dist/
+*.spec.bak

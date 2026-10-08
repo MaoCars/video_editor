@@ -1,0 +1,37 @@
+name: Build Windows app
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . pyinstaller
+      - name: Construir ejecutable con ffmpeg incluido
+        run: python packaging/build.py --ffmpeg --zip
+      - name: Probar el ejecutable
+        run: |
+          dist\musicviz\musicviz.exe --version
+          dist\musicviz\musicviz.exe check
+          dist\musicviz\musicviz.exe presets
+      - name: Subir ZIP como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: musicviz-windows
+          path: dist/*.zip
+      - name: Publicar release (sólo etiquetas v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip

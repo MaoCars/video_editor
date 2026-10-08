@@ -36,11 +36,15 @@ def _analyze(project: ProjectConfig):
     return features
 
 
-@app.callback()
-def _main_callback(version: bool = typer.Option(False, "--version", help="Muestra la versión y sale.")):
-    if version:
+def _version_callback(value: bool):
+    if value:
         console.print(f"musicviz {__version__}")
         raise typer.Exit()
+
+
+@app.callback()
+def _main_callback(version: bool = typer.Option(False, "--version", help="Muestra la versión y sale.", callback=_version_callback, is_eager=True)):
+    pass
 
 
 @app.command()

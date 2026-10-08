@@ -14,7 +14,17 @@ el render usa varios núcleos de CPU en paralelo y la codificación del video se
 
 ## 1. Instalación (Windows 11)
 
-### Opción rápida (sin escribir comandos)
+### Opción ejecutable (sin instalar Python)
+
+En la pestaña **Actions** del repositorio (o en **Releases** cuando haya una versión etiquetada) está el ZIP
+`musicviz-<versión>-windows-x64.zip`, generado automáticamente en cada cambio de `main`. Descomprímelo donde
+quieras y haz doble clic en `musicviz-gui.exe`. Incluye Python, todas las librerías y ffmpeg (carpeta `bin`),
+así que no hay nada más que instalar. `musicviz.exe` es la versión de línea de comandos (`musicviz.exe check`,
+`musicviz.exe render proyecto.yaml`...). Pesa unos 400 MB descomprimido.
+
+Para crear el ejecutable tú mismo: `build_exe.bat` (o `python packaging/build.py --ffmpeg --zip`).
+
+### Opción rápida (con Python, sin escribir comandos)
 
 1. Descarga el proyecto como ZIP desde GitHub (**Code → Download ZIP**) y descomprímelo, por ejemplo en `C:\musicviz`.
 2. Instala Python desde <https://www.python.org/downloads/> marcando **Add python.exe to PATH**.

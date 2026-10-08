@@ -20,7 +20,9 @@ DEFAULT_SR = 44100
 
 
 def _ffmpeg_path() -> Optional[str]:
-    return shutil.which("ffmpeg")
+    from ..render.exporter import find_tool
+
+    return find_tool("ffmpeg")
 
 
 def load_audio(path: str | Path, sr: int = DEFAULT_SR, start: float = 0.0, duration: Optional[float] = None) -> np.ndarray:
@@ -61,7 +63,9 @@ def load_audio(path: str | Path, sr: int = DEFAULT_SR, start: float = 0.0, durat
 
 
 def probe_duration(path: str | Path) -> Optional[float]:
-    ffprobe = shutil.which("ffprobe")
+    from ..render.exporter import find_tool
+
+    ffprobe = find_tool("ffprobe")
     if not ffprobe:
         return None
     proc = subprocess.run(
