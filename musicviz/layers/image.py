@@ -93,17 +93,14 @@ class ImageOverlay(Layer[ImageLayer]):
         nw, nh = max(int(round(sw * scale)), 1), max(int(round(sh * scale)), 1)
         return cv2.resize(sprite, (nw, nh), interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR)
 
-    def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
+    def placement(self, frame: FrameFeatures) -> tuple[float, float, float, float, float]:
+        """(cx, cy, escala, ángulo en grados, desenfoque 0..1) del sprite en este frame (compartido CPU/GPU)."""
         assert self.ctx is not None
         cfg = self.cfg
         anim = self.anim
         keys = self.keys
         scale = self.base_scale * (1.0 + cfg.pulse * frame.drive(cfg.pulse_trigger)) * anim.scale * max(keys.scale, 0.0)
         angle = cfg.rotation + cfg.rotation_speed * frame.time + keys.rotation
-        sprite = self._transform(self.sprite, scale, angle)
-        if anim.blur > 0:
-            sprite = cv2.GaussianBlur(sprite, (0, 0), max(anim.blur * self.ctx.px(20), 0.3))
-        sh, sw = sprite.shape[:2]
         kx, ky = self.key_position()
         x, y = kx + anim.dx, ky + anim.dy
         if cfg.shake > 0:
@@ -114,6 +111,15 @@ class ImageOverlay(Layer[ImageLayer]):
         # El anclaje se calcula con el tamaño sin rotar para que la imagen no "salte" al girar
         bw, bh = self.sprite.shape[1] * scale, self.sprite.shape[0] * scale
         cx, cy = anchor_center(x, y, bw, bh, cfg.anchor)
+        return cx, cy, scale, angle, anim.blur
+
+    def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
+        assert self.ctx is not None
+        cfg = self.cfg
+        cx, cy, scale, angle, blur = self.placement(frame)
+        sprite = self._transform(self.sprite, scale, angle)
+        if blur > 0:
+            sprite = cv2.GaussianBlur(sprite, (0, 0), max(blur * self.ctx.px(20), 0.3))
         layer = canvas.new_layer()
         if self.shadow_sprite is not None:
             shadow = self._transform(self.shadow_sprite, scale, angle)

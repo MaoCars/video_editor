@@ -16,8 +16,8 @@ from .canvas import Canvas, RenderContext, float_to_uint8, premultiplied_to_rgba
 from .sections import SectionTimeline, resolve_sections
 
 
-class Scene:
-    """Fondo + capas + efectos preparados para una resolución concreta."""
+class SceneBase:
+    """Fondo + capas + efectos preparados para una resolución concreta (común a los backends CPU y GPU)."""
 
     def __init__(self, project: ProjectConfig, features: AudioFeatures, width: int, height: int):
         self.project = project
@@ -32,40 +32,63 @@ class Scene:
         for effect in self.effects:
             effect.prepare(self.ctx, features)
         self.transparent = bool(project.output.transparent)
-        self.canvas = Canvas(width, height, track_alpha=self.transparent)
         self.timeline = SectionTimeline(resolve_sections(project, features))
 
     @property
     def channels(self) -> int:
         return 4 if self.transparent else 3
 
-    def render_float(self, index: int) -> np.ndarray:
-        """Frame float32: (H, W, 3) RGB o, en modo transparente, (H, W, 4) RGB premultiplicado + alfa."""
+    def frame_state(self, index: int):
+        """FrameFeatures con el estado de sección aplicado, y la sección activa."""
         frame = self.features.frame(index)
         section = self.timeline.state_at(frame.time)
         frame.palette = section.palette
         frame.intensity = section.intensity
         frame.section = section.name
-        canvas = self.canvas
-        if self.transparent:
-            canvas.clear()
-        else:
-            self.background.render(canvas, frame, section.background)
+        return frame, section
+
+    def active_layers(self, frame, section):
         for layer in self.layers:
             if not section.allows_layer(layer.cfg.name, layer.cfg.type):
                 continue
             if layer.cfg.sections is not None and section.name not in layer.cfg.sections:
                 continue
             if layer.begin_frame(frame):
-                layer.render(canvas, frame)
-        img = canvas.img
-        if self.transparent:
-            img = np.concatenate([img, canvas.alpha], axis=2)
+                yield layer
+
+    def active_effects(self, section):
         for effect in self.effects:
             if not section.allows_effect(effect.cfg.name, effect.cfg.type):
                 continue
             if effect.cfg.sections is not None and section.name not in effect.cfg.sections:
                 continue
+            yield effect
+
+    def close(self) -> None:
+        pass
+
+
+class Scene(SceneBase):
+    """Backend CPU (NumPy + OpenCV)."""
+
+    def __init__(self, project: ProjectConfig, features: AudioFeatures, width: int, height: int):
+        super().__init__(project, features, width, height)
+        self.canvas = Canvas(width, height, track_alpha=self.transparent)
+
+    def render_float(self, index: int) -> np.ndarray:
+        """Frame float32: (H, W, 3) RGB o, en modo transparente, (H, W, 4) RGB premultiplicado + alfa."""
+        frame, section = self.frame_state(index)
+        canvas = self.canvas
+        if self.transparent:
+            canvas.clear()
+        else:
+            self.background.render(canvas, frame, section.background)
+        for layer in self.active_layers(frame, section):
+            layer.render(canvas, frame)
+        img = canvas.img
+        if self.transparent:
+            img = np.concatenate([img, canvas.alpha], axis=2)
+        for effect in self.active_effects(section):
             img = effect.apply(img, frame)
         return img
 
@@ -75,6 +98,29 @@ class Scene:
         if self.transparent:
             return premultiplied_to_rgba8(img)
         return float_to_uint8(img)
+
+
+def resolve_backend(requested: str) -> str:
+    """'gpu' o 'cpu' según lo pedido y la disponibilidad de OpenGL."""
+    if requested == "cpu":
+        return "cpu"
+    from .gpu import gpu_available
+
+    if gpu_available():
+        return "gpu"
+    if requested == "gpu":
+        raise RuntimeError("El backend GPU no está disponible (no se pudo crear un contexto OpenGL). Usa backend: cpu.")
+    return "cpu"
+
+
+def make_scene(project: ProjectConfig, features: AudioFeatures, width: int, height: int, backend: Optional[str] = None) -> SceneBase:
+    """Crea la escena con el backend indicado (None = el del proyecto)."""
+    chosen = resolve_backend(backend or project.output.backend)
+    if chosen == "gpu":
+        from .gpu.scene import GpuScene
+
+        return GpuScene(project, features, width, height)
+    return Scene(project, features, width, height)
 
 
 def output_size(project: ProjectConfig, scale: float = 1.0) -> tuple[int, int]:
@@ -102,7 +148,7 @@ def _init_worker(project_dict: dict, features: AudioFeatures, width: int, height
     global _SCENE
     cv2.setNumThreads(1)
     project = ProjectConfig.model_validate(project_dict)
-    _SCENE = Scene(project, features, width, height)
+    _SCENE = Scene(project, features, width, height)  # los procesos auxiliares siempre usan CPU
 
 
 def _render_worker(index: int) -> bytes:
@@ -118,12 +164,20 @@ def iter_frames(
     indices: Iterable[int],
     workers: int = 1,
 ) -> Iterator[bytes]:
-    """Genera frames RGB24 crudos (bytes) en orden, usando `workers` procesos."""
+    """Genera frames crudos (bytes RGB24, o RGBA en modo transparente) en orden.
+
+    Con backend GPU el render es secuencial en este proceso (la GPU hace el trabajo); con CPU se
+    reparte entre `workers` procesos.
+    """
     indices = list(indices)
-    if workers <= 1 or len(indices) < 8:
-        scene = Scene(project, features, width, height)
-        for i in indices:
-            yield scene.render(i).tobytes()
+    backend = resolve_backend(project.output.backend)
+    if backend == "gpu" or workers <= 1 or len(indices) < 8:
+        scene = make_scene(project, features, width, height, backend)
+        try:
+            for i in indices:
+                yield scene.render(i).tobytes()
+        finally:
+            scene.close()
         return
     ctx = mp.get_context("spawn")
     project_dict = project.model_dump(mode="json")
@@ -136,6 +190,9 @@ def iter_frames(
 def render_frame_image(project: ProjectConfig, features: AudioFeatures, time: float, scale: float = 1.0) -> np.ndarray:
     """Renderiza un único frame (RGB uint8, o RGBA si el proyecto es transparente) en el instante `time`."""
     w, h = output_size(project, scale)
-    scene = Scene(project, features, w, h)
-    index = int(round(time * features.fps))
-    return scene.render(index)
+    scene = make_scene(project, features, w, h)
+    try:
+        index = int(round(time * features.fps))
+        return scene.render(index)
+    finally:
+        scene.close()

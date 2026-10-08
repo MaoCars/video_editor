@@ -51,17 +51,32 @@ class Bars(Layer[BarsLayer]):
         t = i / max(self.n - 1, 1) if self.cfg.gradient == "index" else value
         return to_cv(self.colors_lut[int(np.clip(t, 0, 1) * 255)])
 
-    def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
+    def geometry(self, frame: FrameFeatures) -> dict:
+        """Geometría compartida CPU/GPU: valores, centros x, alturas (px) y colores RGBA float (n,4)."""
         assert self.ctx is not None
         cfg = self.cfg
         self.colors_lut = self.luts(frame)[0]
         cx, self.cy = self.key_position()
         self.x0 = cx - self.area_w / 2.0
         self.max_h = self.base_max_h * max(self.keys.scale, 0.0)
-        layer = canvas.new_layer()
         values = build_values(frame.spectrum, self.n, cfg.symmetric)
         if cfg.bass_boost > 0:
             values = np.clip(values * (1.0 + cfg.bass_boost * frame.bass), 0.0, 1.0)
+        heights = np.maximum(values * self.max_h, cfg.min_height * self.ctx.height)
+        xcs = self.x0 + self.slot * (np.arange(self.n) + 0.5)
+        if cfg.gradient == "index":
+            t = np.arange(self.n, dtype=np.float32) / max(self.n - 1, 1)
+        else:
+            t = np.clip(values, 0.0, 1.0)
+        colors = self.colors_lut[np.clip(t * 255, 0, 255).astype(np.int32)]
+        return {"values": values, "xc": xcs.astype(np.float32), "heights": heights.astype(np.float32), "colors": colors, "cy": self.cy, "bar_w": self.bar_w}
+
+    def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
+        assert self.ctx is not None
+        cfg = self.cfg
+        geo = self.geometry(frame)
+        values = geo["values"]
+        layer = canvas.new_layer()
         bw = self.bar_w
         radius = int(round(bw / 2)) if cfg.rounded else 0
         for i, v in enumerate(values):

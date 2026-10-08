@@ -197,7 +197,8 @@ class TextOverlay(Layer[TextLayer]):
         h = {"left": "left", "right": "right", "center": ""}[cfg.align]
         self.anchor = "_".join(p for p in (v, h) if p) or "center"
 
-    def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
+    def placement(self, frame: FrameFeatures) -> tuple[float, float, float, float, float]:
+        """(cx, cy, escala, ángulo en grados, desenfoque 0..1) del sprite en este frame (compartido CPU/GPU)."""
         assert self.ctx is not None
         cfg = self.cfg
         anim = self.anim
@@ -205,11 +206,21 @@ class TextOverlay(Layer[TextLayer]):
         scale = self.base_scale * (1.0 + cfg.pulse * frame.drive(cfg.pulse_trigger)) * anim.scale * max(keys.scale, 0.0)
         sh, sw = self.sprite.shape[:2]
         w, h = max(int(sw * scale), 1), max(int(sh * scale), 1)
-        sprite = cv2.resize(self.sprite, (w, h), interpolation=cv2.INTER_AREA)
-        if anim.blur > 0:
-            sprite = cv2.GaussianBlur(sprite, (0, 0), max(anim.blur * self.ctx.px(14), 0.3))
         x, y = self.key_position()
         cx, cy = anchor_center(x + anim.dx, y + anim.dy, w, h, self.anchor)
+        return cx, cy, scale, keys.rotation, anim.blur
+
+    def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
+        assert self.ctx is not None
+        cfg = self.cfg
+        keys = self.keys
+        anim = self.anim
+        cx, cy, scale, _, blur = self.placement(frame)
+        sh, sw = self.sprite.shape[:2]
+        w, h = max(int(sw * scale), 1), max(int(sh * scale), 1)
+        sprite = cv2.resize(self.sprite, (w, h), interpolation=cv2.INTER_AREA)
+        if blur > 0:
+            sprite = cv2.GaussianBlur(sprite, (0, 0), max(blur * self.ctx.px(14), 0.3))
         layer = canvas.new_layer()
         if self.shadow_sprite is not None:
             ssh, ssw = self.shadow_sprite.shape[:2]

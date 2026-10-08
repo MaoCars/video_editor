@@ -49,6 +49,8 @@ class OutputConfig(StrictModel):
     """auto elige h264_nvenc/libx264 (o prores_4444 si transparent=true). Los últimos cuatro conservan el canal alfa."""
     transparent: bool = False
     """Fondo transparente: no se dibuja el fondo y el video conserva el canal alfa (.mov ProRes 4444 por defecto)."""
+    backend: Literal["auto", "gpu", "cpu"] = "auto"
+    """Motor de dibujo: gpu (OpenGL, tiempo real) o cpu (NumPy/OpenCV en varios procesos). auto = gpu si está disponible."""
     bitrate: str = "16M"
     preset: Optional[str] = None
     """Preset del encoder (NVENC: p1..p7; x264: ultrafast..veryslow). None = por defecto."""

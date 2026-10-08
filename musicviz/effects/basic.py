@@ -69,17 +69,25 @@ class Chromatic(Effect[ChromaticEffect]):
 
 
 class Shake(Effect[ShakeEffect]):
-    def apply(self, img: np.ndarray, frame: FrameFeatures) -> np.ndarray:
+    def params(self, frame: FrameFeatures):
+        """(dx, dy, ángulo, zoom) del frame o None si no actúa (compartido CPU/GPU)."""
         k = self.drive(frame)
         if k <= 0.001:
-            return img
+            return None
         assert self.ctx is not None
         cfg = self.cfg
         rng = np.random.default_rng(cfg.seed * 100003 + frame.index)
         amp = self.ctx.px(cfg.amount) * k
         dx, dy = rng.uniform(-amp, amp, 2)
-        ang = rng.uniform(-1, 1) * cfg.rotation * k
+        ang = float(rng.uniform(-1, 1) * cfg.rotation * k)
         zoom = 1.0 + cfg.zoom * k
+        return float(dx), float(dy), ang, float(zoom)
+
+    def apply(self, img: np.ndarray, frame: FrameFeatures) -> np.ndarray:
+        prm = self.params(frame)
+        if prm is None:
+            return img
+        dx, dy, ang, zoom = prm
         return _zoom(img, zoom, ang, dx, dy)
 
 

@@ -135,6 +135,7 @@ LABELS: dict[str, str] = {
     "react_trigger": "Disparador reacción",
     "name": "Nombre",
     "transparent": "Fondo transparente",
+    "backend": "Motor de dibujo",
     "sections": "Sólo en secciones",
     "sections_enabled": "Usar secciones",
     "palette": "Paleta",

@@ -1311,11 +1311,11 @@ class App(tk.Tk):
 
     def _play_worker(self, project: ProjectConfig, start: float, scale: float):
         try:
-            from ..render.engine import Scene, output_size
+            from ..render.engine import make_scene, output_size
 
             feats = self._get_features_for(project)
             w, h = output_size(project, scale)
-            scene = Scene(project, feats, w, h)
+            scene = make_scene(project, feats, w, h)
             audio_ok = False
             try:
                 import sounddevice as sd
@@ -1327,6 +1327,8 @@ class App(tk.Tk):
             t0 = time.perf_counter()
             last_frame = -1
             while self._playing:
+                if not self._playing:
+                    break
                 t = start + (time.perf_counter() - t0)
                 if t >= feats.duration:
                     break
@@ -1343,6 +1345,10 @@ class App(tk.Tk):
             self._queue.put(("error", f"Reproducción: {exc}"))
             traceback.print_exc()
         finally:
+            try:
+                scene.close()  # type: ignore[name-defined]
+            except Exception:  # noqa: BLE001
+                pass
             self._queue.put(("play_end", None))
 
     # ------------------------------------------------------------------ render
@@ -1455,8 +1461,9 @@ class App(tk.Tk):
 
     def _check_env(self):
         from ..render.exporter import ExportError, available_encoders, encoder_works, ffmpeg_path
+        from ..render.gpu import gpu_info
 
-        lines = []
+        lines = [f"GPU (OpenGL): {gpu_info()}"]
         try:
             lines.append(f"ffmpeg: {ffmpeg_path()}")
             for enc in ("h264_nvenc", "hevc_nvenc", "libx264"):

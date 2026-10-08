@@ -200,15 +200,19 @@ class Background:
         self._section_cache = (key, base)
         return base
 
-    def render(self, canvas: Canvas, frame: FrameFeatures, section_colors: np.ndarray | None = None) -> None:
-        assert self.base is not None and self.ctx is not None
-        cfg = self.cfg
+    def source(self, frame: FrameFeatures, section_colors: np.ndarray | None = None) -> np.ndarray:
+        """Imagen base float32 RGB del frame (video, fondo recoloreado por sección o base fija)."""
+        assert self.base is not None
         if self.video is not None:
-            img = self._video_frame(frame)
-        elif section_colors is not None:
-            img = self._section_base(section_colors)
-        else:
-            img = self.base
+            return self._video_frame(frame)
+        if section_colors is not None:
+            return self._section_base(section_colors)
+        return self.base
+
+    def motion(self, frame: FrameFeatures) -> tuple[float, float, float, float, float]:
+        """(zoom, dx, dy, ángulo en grados, ganancia de brillo) del frame (compartido CPU/GPU)."""
+        assert self.ctx is not None
+        cfg = self.cfg
         intensity = frame.intensity
         zoom = cfg.zoom
         if cfg.pulse > 0:
@@ -220,14 +224,22 @@ class Background:
             if k > 0.001:
                 rng = np.random.default_rng(4242 + frame.index)
                 amp = self.ctx.px(cfg.shake) * k
-                dx, dy = rng.uniform(-amp, amp, 2)
+                dx, dy = (float(v) for v in rng.uniform(-amp, amp, 2))
                 angle = float(rng.uniform(-1, 1)) * cfg.shake_rotation * k
+        gain = 1.0 + cfg.react * frame.drive(cfg.react_trigger) if cfg.react > 0 else 1.0
+        return float(zoom), dx, dy, angle, float(gain)
+
+    def render(self, canvas: Canvas, frame: FrameFeatures, section_colors: np.ndarray | None = None) -> None:
+        assert self.base is not None and self.ctx is not None
+        cfg = self.cfg
+        img = self.source(frame, section_colors)
+        zoom, dx, dy, angle, gain = self.motion(frame)
         if abs(zoom - 1.0) > 0.0005 or abs(dx) > 0.3 or abs(dy) > 0.3 or abs(angle) > 0.01:
             h, w = img.shape[:2]
             M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, zoom)
             M[0, 2] += dx
             M[1, 2] += dy
             img = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
-        if cfg.react > 0:
-            img = img * (1.0 + cfg.react * frame.drive(cfg.react_trigger))
+        if gain != 1.0:
+            img = img * gain
         canvas.fill(img)

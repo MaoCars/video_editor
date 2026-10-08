@@ -109,12 +109,17 @@ def render(
     scale: float = typer.Option(1.0, "--scale", "-s", min=0.05, max=2.0, help="Factor de resolución (0.5 = vista rápida)."),
     start: float = typer.Option(0.0, "--start", help="Segundo inicial del clip a renderizar."),
     duration: Optional[float] = typer.Option(None, "--duration", "-d", help="Duración del clip (segundos). Por defecto toda la canción."),
-    workers: Optional[int] = typer.Option(None, "--workers", "-w", help="Procesos en paralelo (por defecto automático)."),
+    workers: Optional[int] = typer.Option(None, "--workers", "-w", help="Procesos en paralelo (sólo backend CPU; por defecto automático)."),
+    backend: Optional[str] = typer.Option(None, "--backend", "-b", help="Motor de dibujo: gpu, cpu o auto (sobrescribe el del proyecto)."),
 ):
     """Renderiza el video completo (o un fragmento) y lo codifica con ffmpeg."""
+    from .render.engine import resolve_backend
     from .render.exporter import ExportError, export_video
 
     cfg = _load_project(project)
+    if backend:
+        cfg.output.backend = backend  # type: ignore[assignment]
+    console.print(f"Motor de dibujo: [cyan]{resolve_backend(cfg.output.backend)}[/cyan]")
     features = _analyze(cfg)
     try:
         with Progress(TextColumn("[bold blue]Render"), BarColumn(), TextColumn("{task.completed}/{task.total} frames"), TimeElapsedColumn(), TimeRemainingColumn(), console=console) as bar:
@@ -254,6 +259,9 @@ def check():
                 table.add_row(enc, "[red]no disponible[/red]")
     except ExportError as exc:
         table.add_row("ffmpeg", f"[red]{exc}[/red]")
+    from .render.gpu import gpu_info
+
+    table.add_row("GPU (OpenGL)", gpu_info())
     try:
         import cv2
 

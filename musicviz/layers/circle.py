@@ -68,17 +68,30 @@ class CircleSpectrum(Layer[CircleLayer]):
         t = 0.0 if t < 0.0 else 1.0 if t > 1.0 else t
         return with_alpha(self.lut_int[int(t * 255)], fade)
 
-    def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
+    def bar_colors(self, values: np.ndarray, fade: float) -> np.ndarray:
+        """Color RGBA float (n,4) de cada barra según el gradiente (angle o value)."""
+        n = self.n
+        if self.cfg.gradient == "angle":
+            t = np.arange(n, dtype=np.float32) / max(n - 1, 1)
+            if self.cfg.mirror:
+                t = 1.0 - np.abs(2.0 * t - 1.0)
+        else:
+            t = np.clip(values, 0.0, 1.0)
+        cols = self.colors_lut[np.clip(t * 255, 0, 255).astype(np.int32)].copy()
+        cols[:, 3] *= fade
+        return cols
+
+    def geometry(self, frame: FrameFeatures) -> list[dict]:
+        """Geometría por anillo (compartida CPU/GPU): radios, puntos interiores/exteriores y colores."""
         assert self.ctx is not None
         cfg = self.cfg
         self.colors_lut, self.lut_int = self.luts(frame)
         self.ring_color = self._ring_fixed or to_cv(self.colors_lut[0])
         self.cx, self.cy = self.key_position()
-        layer = canvas.new_layer()
         values = self._values(frame)
-        vals = values.tolist()
         pulse = (1.0 + cfg.pulse * self.intensity * frame.drive(cfg.pulse_trigger)) * max(self.keys.scale, 0.0)
         rot = math.radians(cfg.rotation + cfg.rotation_speed * frame.time + self.keys.rotation)
+        rings = []
         for ring_i in range(cfg.rings):
             spread = 1.0 + ring_i * cfg.ring_spread
             r0 = self.base_r * pulse * spread
@@ -87,12 +100,26 @@ class CircleSpectrum(Layer[CircleLayer]):
             ang = self.angles + ring_rot
             cos, sin = np.cos(ang), np.sin(ang)
             lens = values * self.max_len * (1.0 - 0.25 * ring_i) * max(self.keys.scale, 0.0)
-            x_in = self.cx + cos * (r0 - (lens if cfg.inner else 0.0))
-            y_in = self.cy + sin * (r0 - (lens if cfg.inner else 0.0))
-            x_out = self.cx + cos * (r0 + lens)
-            y_out = self.cy + sin * (r0 + lens)
+            inner = lens if cfg.inner else 0.0
+            rings.append({
+                "r0": float(r0), "rot": float(ring_rot), "fade": float(fade), "values": values,
+                "x_in": self.cx + cos * (r0 - inner), "y_in": self.cy + sin * (r0 - inner),
+                "x_out": self.cx + cos * (r0 + lens), "y_out": self.cy + sin * (r0 + lens),
+                "colors": self.bar_colors(values, fade),
+            })
+        return rings
+
+    def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
+        assert self.ctx is not None
+        cfg = self.cfg
+        layer = canvas.new_layer()
+        for ring in self.geometry(frame):
+            r0, ring_rot, fade = ring["r0"], ring["rot"], ring["fade"]
+            vals = ring["values"].tolist()
+            x_in, y_in, x_out, y_out = ring["x_in"], ring["y_in"], ring["x_out"], ring["y_out"]
             xi_in, yi_in = np.rint(x_in).astype(int).tolist(), np.rint(y_in).astype(int).tolist()
             xi_out, yi_out = np.rint(x_out).astype(int).tolist(), np.rint(y_out).astype(int).tolist()
+            cols = [to_cv(c) for c in ring["colors"]]
 
             if cfg.ring:
                 cv2.circle(layer, (int(round(self.cx)), int(round(self.cy))), int(round(r0)), self.ring_color, self.ring_thick, cv2.LINE_AA)
@@ -101,7 +128,7 @@ class CircleSpectrum(Layer[CircleLayer]):
             if style in ("bars", "rays"):
                 thick = self.thick if style == "bars" else max(self.thick // 2, 1)
                 for i in range(self.n):
-                    col = self._color(i, vals[i], fade)
+                    col = cols[i]
                     p0 = (xi_in[i], yi_in[i])
                     p1 = (xi_out[i], yi_out[i])
                     cv2.line(layer, p0, p1, col, thick, cv2.LINE_AA)
@@ -111,9 +138,8 @@ class CircleSpectrum(Layer[CircleLayer]):
                             cv2.circle(layer, p0, thick // 2, col, -1, cv2.LINE_AA)
             elif style == "dots":
                 for i in range(self.n):
-                    col = self._color(i, vals[i], fade)
                     rad = max(int(round(self.thick * (0.6 + vals[i]))), 1)
-                    cv2.circle(layer, (xi_out[i], yi_out[i]), rad, col, -1, cv2.LINE_AA)
+                    cv2.circle(layer, (xi_out[i], yi_out[i]), rad, cols[i], -1, cv2.LINE_AA)
             else:  # line / filled
                 pts_out = np.stack([x_out, y_out], axis=1).astype(np.int32).reshape(-1, 1, 2)
                 mid_col = to_cv(self.colors_lut[128], fade)
@@ -136,14 +162,11 @@ class CircleSpectrum(Layer[CircleLayer]):
                     if cfg.ring:
                         cv2.circle(layer, (int(round(self.cx)), int(round(self.cy))), int(round(r0)), self.ring_color, self.ring_thick, cv2.LINE_AA)
                 else:
-                    # Polilínea con color por segmento
                     for i in range(self.n):
                         j = (i + 1) % self.n
-                        col = self._color(i, vals[i], fade)
-                        cv2.line(layer, (xi_out[i], yi_out[i]), (xi_out[j], yi_out[j]), col, self.thick, cv2.LINE_AA)
+                        cv2.line(layer, (xi_out[i], yi_out[i]), (xi_out[j], yi_out[j]), cols[i], self.thick, cv2.LINE_AA)
                     if cfg.inner:
                         for i in range(self.n):
                             j = (i + 1) % self.n
-                            col = self._color(i, vals[i], fade)
-                            cv2.line(layer, (xi_in[i], yi_in[i]), (xi_in[j], yi_in[j]), col, self.thick, cv2.LINE_AA)
+                            cv2.line(layer, (xi_in[i], yi_in[i]), (xi_in[j], yi_in[j]), cols[i], self.thick, cv2.LINE_AA)
         self.composite(canvas, layer)

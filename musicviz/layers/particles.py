@@ -116,25 +116,22 @@ class Particles(Layer[ParticlesLayer]):
         else:
             cv2.circle(layer, (xi, yi), r, col, -1, cv2.LINE_AA)
 
-    # ---------------------------------------------------------------- render
-    def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
+    # ---------------------------------------------------------------- geometría (compartida CPU/GPU)
+    def batches(self, frame: FrameFeatures) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+        """Partículas vivas en este frame: lista de (pos (m,2), tamaño (m,), alfa (m,), índice de color (m,), velocidad (m,2))."""
         assert self.ctx is not None
         cfg = self.cfg
         w, h = self.ctx.width, self.ctx.height
-        layer = canvas.new_layer()
-        self.colors_lut = self.luts(frame)[1]
         t = frame.time
         inten = self.intensity
         size_k = (1.0 + cfg.react_size * frame.bass) * (0.75 + 0.25 * inten)
         alpha_k = min(inten, 1.0)
-
-        # ambiente -------------------------------------------------------------
+        out = []
         if cfg.count > 0:
             musical_t = t + cfg.energy_speed * float(self.features.energy_integral[frame.index])
             disp = self.amb_dir * (self.amb_speed * musical_t)[:, None]
             pos = self.amb_pos + disp
             if cfg.direction in ("out", "in"):
-                # Reaparecen cíclicamente al salir de la pantalla
                 period = max(self.ctx.min_dim * 0.9, 1.0)
                 travel = (self.amb_speed * musical_t) % period
                 pos = np.array([self.cx, self.cy], np.float32) + self.amb_dir * travel[:, None]
@@ -142,20 +139,12 @@ class Particles(Layer[ParticlesLayer]):
                     pos = np.array([self.cx, self.cy], np.float32) + self.amb_dir * (period - travel)[:, None]
                 pos += (self.amb_pos - np.array([w / 2, h / 2], np.float32)) * 0.15
             margin = 8.0
+            pos = pos.copy()
             pos[:, 0] = (pos[:, 0] + margin) % (w + 2 * margin) - margin
             pos[:, 1] = (pos[:, 1] + margin) % (h + 2 * margin) - margin
             tw = 1.0 - cfg.twinkle * 0.5 * (1.0 + np.sin(self.amb_phase + t * 3.0 + self.amb_speed * 0.01))
             level = (0.55 + 0.45 * frame.rms) * alpha_k
-            xs, ys = pos[:, 0].tolist(), pos[:, 1].tolist()
-            sizes = (self.amb_size * size_k).tolist()
-            tws = tw.tolist()
-            vel = self.amb_dir * self.amb_speed[:, None]
-            lut = self.colors_lut
-            for i in range(cfg.count):
-                col = with_alpha(lut[self.amb_color[i]], tws[i] * level)
-                self._draw(layer, xs[i], ys[i], sizes[i], col, vel[i])
-
-        # ráfagas --------------------------------------------------------------
+            out.append((pos.astype(np.float32), (self.amb_size * size_k).astype(np.float32), (tw * level).astype(np.float32), np.asarray(self.amb_color), (self.amb_dir * self.amb_speed[:, None]).astype(np.float32)))
         if cfg.burst > 0 and len(self.burst_times):
             lo = int(np.searchsorted(self.burst_times, t - cfg.lifetime, side="left"))
             hi = int(np.searchsorted(self.burst_times, t, side="right"))
@@ -168,18 +157,24 @@ class Particles(Layer[ParticlesLayer]):
                 frac = np.clip(dt / np.maximum(life, 1e-6), 0.0, 1.0)
                 p = self.burst_p0[b] + self.burst_v[b] * dt
                 p[:, 1] += 0.5 * self.gravity * dt * dt
-                drag = 1.0 / (1.0 + dt * 1.5)  # frena suavemente
+                drag = 1.0 / (1.0 + dt * 1.5)
                 p = self.burst_p0[b] + (p - self.burst_p0[b]) * drag
                 alpha = (1.0 - frac) ** 1.5 * alpha_k
                 sizes = self.burst_size[b] * (1.0 - 0.6 * frac) * size_k
-                xs, ys = p[:, 0].tolist(), p[:, 1].tolist()
-                alphas, sz = alpha.tolist(), sizes.tolist()
-                cols = self.burst_color[b]
-                lut = self.colors_lut
-                for i in np.nonzero(alive)[0].tolist():
-                    x, y = xs[i], ys[i]
-                    if x < -20 or y < -20 or x > w + 20 or y > h + 20:
-                        continue
-                    self._draw(layer, x, y, sz[i], with_alpha(lut[cols[i]], alphas[i]), self.burst_v[b, i] * drag)
+                on = alive & (p[:, 0] >= -20) & (p[:, 1] >= -20) & (p[:, 0] <= w + 20) & (p[:, 1] <= h + 20)
+                if not np.any(on):
+                    continue
+                out.append((p[on].astype(np.float32), sizes[on].astype(np.float32), alpha[on].astype(np.float32), self.burst_color[b][on], (self.burst_v[b][on] * drag).astype(np.float32)))
+        return out
 
+    # ---------------------------------------------------------------- render
+    def render(self, canvas: Canvas, frame: FrameFeatures) -> None:
+        assert self.ctx is not None
+        layer = canvas.new_layer()
+        lut = self.colors_lut = self.luts(frame)[1]
+        for pos, sizes, alphas, cols, vel in self.batches(frame):
+            xs, ys = pos[:, 0].tolist(), pos[:, 1].tolist()
+            sz, al, ci = sizes.tolist(), alphas.tolist(), cols.tolist()
+            for i in range(len(xs)):
+                self._draw(layer, xs[i], ys[i], sz[i], with_alpha(lut[ci[i]], al[i]), vel[i])
         self.composite(canvas, layer)

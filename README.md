@@ -445,11 +445,21 @@ effects:
 
 ---
 
-## 6. Rendimiento y memoria (8 GB de RAM)
+## 6. Motores de dibujo y rendimiento (8 GB de RAM)
 
-- El render es CPU (OpenCV + NumPy) en varios procesos; la codificación es GPU (NVENC).
-  A 1080p60 cada proceso tarda ~80‑200 ms por frame según la cantidad de capas/efectos; con
-  6‑8 procesos una canción de 3‑4 minutos tarda unos pocos minutos.
+Hay dos motores con el mismo resultado visual (`output.backend`, o `--backend` en `musicviz render`):
+
+| Motor | Cómo dibuja | Velocidad a 1080p60 | Cuándo |
+|---|---|---|---|
+| `gpu` | OpenGL 3.3 (shaders) en la tarjeta gráfica; un solo proceso | Decenas o cientos de frames por segundo: una canción de 3 min en segundos, vista previa en tiempo real | Por defecto cuando hay OpenGL (`auto`) |
+| `cpu` | NumPy + OpenCV repartido en varios procesos | 80‑200 ms por frame y proceso; 3‑4 min de canción en unos minutos con 6‑8 procesos | Equipos sin GPU o drivers; respaldo automático |
+
+`musicviz check` muestra qué GPU y versión de OpenGL se detectan. En Windows con la RTX 4060 el motor
+GPU se activa solo; si los drivers fallan, la app cae al motor CPU sin que tengas que tocar nada.
+La codificación del video (NVENC) es independiente y funciona con ambos motores. La variable de entorno
+`MUSICVIZ_NO_GPU=1` fuerza el motor CPU (útil para comparar).
+
+Con el motor CPU:
 - Por defecto se usan `min(CPUs-2, 8)` procesos. Si notas que el sistema se queda sin memoria,
   baja con `--workers 4` (cada proceso usa ~150‑300 MB a 1080p).
 - Ajusta primero con `snapshot` y renders cortos a `--scale 0.5`; el render final a 1080p sólo al terminar.
@@ -467,7 +477,8 @@ musicviz/
   layers/             # background, bars, circle, waveform, particles, image, text, progress
   effects/            # glitch, bloom, chromatic, shake, vignette, color, pixelate, strobe, ...
   render/canvas.py    # lienzo float RGB + composición de capas RGBA con glow y blend modes
-  render/engine.py    # Scene, render por frame, pool de procesos
+  render/engine.py    # SceneBase/Scene (CPU), render por frame, pool de procesos, elección de motor
+  render/gpu/         # motor GPU: shaders GLSL (shaders.py) y GpuScene (scene.py) que reutiliza la geometría de las capas
   render/exporter.py  # ffmpeg (NVENC / libx264) + mezcla de audio
   render/preview.py   # ventana de vista previa (OpenCV)
   gui/app.py          # interfaz gráfica Tkinter; gui/fields.py genera los formularios desde los modelos
