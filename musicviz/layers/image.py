@@ -4,34 +4,14 @@ from __future__ import annotations
 
 import math
 
-import cv2
 import numpy as np
 
 from ..audio.analysis import AudioFeatures, FrameFeatures
 from ..config import ImageLayer
 from ..render.canvas import Canvas, RenderContext, anchor_center, paste_rgba, rounded_rect_mask
 from ..utils.color import parse_color
-from .background import load_image_rgba
+from ..utils.imaging import blur_u8, cv2, ellipse_ring, fit_into_box, load_image_rgba
 from .base import Layer
-
-
-def fit_into_box(img: np.ndarray, bw: int, bh: int, fit: str, focus: tuple[float, float]) -> np.ndarray:
-    """Encaja una imagen RGBA en una caja bw×bh. cover recorta alrededor de `focus`; contain rellena con transparente."""
-    h, w = img.shape[:2]
-    if fit == "cover":
-        k = max(bw / w, bh / h)
-        nw, nh = max(int(round(w * k)), bw), max(int(round(h * k)), bh)
-        resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_CUBIC)
-        x0 = int(round((nw - bw) * min(max(focus[0], 0.0), 1.0)))
-        y0 = int(round((nh - bh) * min(max(focus[1], 0.0), 1.0)))
-        return np.ascontiguousarray(resized[y0 : y0 + bh, x0 : x0 + bw])
-    k = min(bw / w, bh / h)
-    nw, nh = max(int(round(w * k)), 1), max(int(round(h * k)), 1)
-    resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA if k < 1 else cv2.INTER_CUBIC)
-    out = np.zeros((bh, bw, 4), np.uint8)
-    x0, y0 = (bw - nw) // 2, (bh - nh) // 2
-    out[y0 : y0 + nh, x0 : x0 + nw] = resized
-    return out
 
 
 class ImageOverlay(Layer[ImageLayer]):
@@ -59,7 +39,7 @@ class ImageOverlay(Layer[ImageLayer]):
             col = tuple(int(c * 255) for c in parse_color(cfg.border_color))
             ring = np.zeros((bh_i, bw_i, 4), np.uint8)
             if cfg.shape == "circle":
-                cv2.ellipse(ring, (bw_i // 2, bh_i // 2), (max(bw_i // 2 - bpx // 2 - 1, 1), max(bh_i // 2 - bpx // 2 - 1, 1)), 0, 0, 360, col, bpx, cv2.LINE_AA)
+                ring = ellipse_ring(bw_i, bh_i, bpx, col)
             else:
                 outer = mask
                 inner = rounded_rect_mask(max(bw_i - 2 * bpx, 1), max(bh_i - 2 * bpx, 1), max(radius - bpx, 0), cfg.shape)
@@ -77,7 +57,7 @@ class ImageOverlay(Layer[ImageLayer]):
             sh = np.zeros((bh_i + 2 * pad, bw_i + 2 * pad, 4), np.uint8)
             sh[pad : pad + bh_i, pad : pad + bw_i, 3] = sprite[..., 3]
             if blur > 0.5:
-                sh[..., 3] = cv2.GaussianBlur(sh[..., 3], (0, 0), blur)
+                sh[..., 3] = blur_u8(sh[..., 3], blur)
             sh[..., 3] = (sh[..., 3].astype(np.float32) * min(cfg.shadow, 1.0)).astype(np.uint8)
             self.shadow_sprite = sh
         self.x, self.y = ctx.rel(cfg.position)

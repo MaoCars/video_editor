@@ -2,6 +2,8 @@
 import numpy as np
 import pytest
 
+cv2 = pytest.importorskip("cv2", reason="estas pruebas usan el backend CPU (OpenCV)")
+
 from musicviz.config import ProjectConfig, SectionConfig
 from musicviz.render.engine import Scene
 from musicviz.render.sections import SectionTimeline, detect_sections, resolve_sections

@@ -2,48 +2,18 @@
 from __future__ import annotations
 
 import math
+import re
+import subprocess
 
-import cv2
 import numpy as np
 
 from ..audio.analysis import AudioFeatures, FrameFeatures
 from ..config import BackgroundConfig
-from ..render.canvas import Canvas, RenderContext, fast_blur
+from ..render.canvas import Canvas, RenderContext
 from ..utils.color import gradient, parse_color
+from ..utils.imaging import cv2, fast_blur, fit_image, load_image_rgba, scale_uint8, to_uint8  # noqa: F401 - reexportados
 from ..utils.lookahead import Lookahead
-
-
-def load_image_rgba(path: str) -> np.ndarray:
-    img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
-    if img is None:
-        raise FileNotFoundError(f"No se pudo leer la imagen: {path}")
-    if img.ndim == 2:
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGRA)
-    elif img.shape[2] == 3:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
-    else:
-        img = img.copy()
-    img[..., :3] = img[..., 2::-1]  # BGR -> RGB
-    return img
-
-
-def fit_image(img: np.ndarray, width: int, height: int, mode: str, focus: tuple[float, float] = (0.5, 0.5)) -> np.ndarray:
-    h, w = img.shape[:2]
-    if mode == "stretch":
-        return cv2.resize(img, (width, height), interpolation=cv2.INTER_AREA)
-    scale = max(width / w, height / h) if mode == "cover" else min(width / w, height / h)
-    nw, nh = max(int(round(w * scale)), 1), max(int(round(h * scale)), 1)
-    resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC)
-    out = np.zeros((height, width, img.shape[2]), img.dtype)
-    fx = min(max(focus[0], 0.0), 1.0) if mode == "cover" else 0.5
-    fy = min(max(focus[1], 0.0), 1.0) if mode == "cover" else 0.5
-    x0 = int(round((width - nw) * fx))
-    y0 = int(round((height - nh) * fy))
-    sx0, sy0 = max(-x0, 0), max(-y0, 0)
-    dx0, dy0 = max(x0, 0), max(y0, 0)
-    dw, dh = min(nw - sx0, width - dx0), min(nh - sy0, height - dy0)
-    out[dy0 : dy0 + dh, dx0 : dx0 + dw] = resized[sy0 : sy0 + dh, sx0 : sx0 + dw]
-    return out
+from ..utils.tools import find_tool
 
 
 class _VideoFrame:
@@ -59,7 +29,7 @@ class _VideoFrame:
     def u8(self) -> np.ndarray:
         if self._u8 is None:
             assert self._f32 is not None
-            self._u8 = cv2.convertScaleAbs(np.clip(self._f32, 0, 1), alpha=255.0)
+            self._u8 = to_uint8(self._f32)
         return self._u8
 
     @property
@@ -70,38 +40,122 @@ class _VideoFrame:
         return self._f32
 
 
+_DURATION_RE = re.compile(r"Duration:\s*(\d+):(\d+):([\d.]+)")
+_VIDEO_RE = re.compile(r"Stream #\d+:\d+.*?Video:.*")
+_SIZE_RE = re.compile(r"[ ,](\d{2,5})x(\d{2,5})(?:[ ,\[]|$)")
+_FPS_RE = re.compile(r"([\d.]+)\s*fps")
+_TBR_RE = re.compile(r"([\d.]+)\s*tbr")
+_ROT_RE = re.compile(r"rotate\s*:\s*(-?\d+)|rotation of (-?[\d.]+) degrees")
+_FRAMES_RE = re.compile(r"frame=\s*(\d+)")
+
+
+def _ffmpeg() -> str:
+    ff = find_tool("ffmpeg")
+    if not ff:
+        raise RuntimeError("Para usar un video de fondo hace falta ffmpeg (junto a la aplicación o en el PATH).")
+    return ff
+
+
+def probe_video(path: str) -> dict:
+    """Metadatos de un video leyendo la cabecera que imprime `ffmpeg -i`: fps, duración, tamaño y rotación."""
+    ff = _ffmpeg()
+    res = subprocess.run([ff, "-hide_banner", "-nostdin", "-i", path], capture_output=True, text=True, errors="ignore")
+    err = res.stderr
+    m = _VIDEO_RE.search(err)
+    if m is None:
+        raise FileNotFoundError(f"No se pudo abrir el video de fondo (ffmpeg no encuentra una pista de video): {path}")
+    line = m.group(0)
+    size = _SIZE_RE.search(line)
+    if size is None:
+        raise ValueError(f"No se pudo leer el tamaño del video de fondo: {path}")
+    w, h = int(size.group(1)), int(size.group(2))
+    fps_m = _FPS_RE.search(line) or _TBR_RE.search(line)
+    fps = float(fps_m.group(1)) if fps_m else 30.0
+    if not fps or fps <= 0 or fps > 1000:
+        fps = 30.0
+    rot = _ROT_RE.search(err)
+    if rot:
+        deg = abs(float(rot.group(1) or rot.group(2)))
+        if round(deg) % 180 == 90:
+            w, h = h, w
+    dur_m = _DURATION_RE.search(err)
+    duration = None
+    if dur_m:
+        duration = int(dur_m.group(1)) * 3600 + int(dur_m.group(2)) * 60 + float(dur_m.group(3))
+    if not duration or duration <= 0:
+        # Sin duración en la cabecera (p. ej. algunos GIF/WebM): contar frames decodificando una vez
+        cnt = subprocess.run([ff, "-hide_banner", "-nostdin", "-i", path, "-map", "0:v:0", "-an", "-f", "null", "-"], capture_output=True, text=True, errors="ignore")
+        frames = [int(x) for x in _FRAMES_RE.findall(cnt.stderr)]
+        if not frames or frames[-1] <= 0:
+            raise ValueError(f"El video de fondo no tiene frames legibles: {path}")
+        duration = frames[-1] / fps
+    return {"width": w, "height": h, "fps": fps, "duration": float(duration)}
+
+
 class VideoSource:
-    """Lee frames de un video por tiempo. Lee en secuencia cuando los frames son consecutivos
-    (lo habitual, porque cada proceso renderiza bloques de frames seguidos) y busca sólo si hay saltos."""
+    """Lee frames RGB de un video decodificándolo con ffmpeg (por tubería, sin OpenCV).
+
+    Lee en secuencia cuando los frames son consecutivos (lo habitual) y relanza ffmpeg con `-ss` sólo si hay saltos.
+    La salida se fuerza a la cadencia `fps` del video, así el frame k empieza en el segundo k / fps.
+    """
 
     MAX_SKIP = 8  # saltos hacia delante hasta este tamaño se leen de seguido; más lejos se busca
 
     def __init__(self, path: str):
         self.path = path
-        self.cap = cv2.VideoCapture(path)
-        if not self.cap.isOpened():
-            raise FileNotFoundError(f"No se pudo abrir el video de fondo: {path}")
-        self.fps = float(self.cap.get(cv2.CAP_PROP_FPS)) or 30.0
-        self.n_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if self.n_frames <= 0:
-            self.n_frames = self._count_frames()
-        if self.n_frames <= 0:
-            raise ValueError(f"El video de fondo no tiene frames legibles: {path}")
-        self.duration = self.n_frames / self.fps
+        self.ffmpeg = _ffmpeg()
+        info = probe_video(path)
+        self.width, self.height = info["width"], info["height"]
+        self.fps = info["fps"]
+        self.duration = info["duration"]
+        self.n_frames = max(int(round(self.duration * self.fps)), 1)
+        self._frame_bytes = self.width * self.height * 3
+        self._proc: subprocess.Popen | None = None
+        self._next_index = -1  # índice del próximo frame que entregará la tubería
         self._last_index = -1
         self._last_frame: np.ndarray | None = None
 
-    def _count_frames(self) -> int:
-        n = 0
-        while True:
-            ok = self.cap.grab()
-            if not ok:
-                break
-            n += 1
-        self.cap.release()
-        self.cap = cv2.VideoCapture(self.path)
-        return n
+    # ------------------------------------------------------------ tubería ffmpeg
+    def _start(self, index: int) -> None:
+        self._stop()
+        t = max(index, 0) / self.fps
+        cmd = [
+            self.ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-threads", "2",
+            "-ss", f"{t:.6f}", "-i", self.path, "-map", "0:v:0", "-an", "-sn", "-dn",
+            "-vf", f"scale={self.width}:{self.height}", "-r", f"{self.fps:.6f}",
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+        ]
+        self._proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, bufsize=0)
+        self._next_index = max(index, 0)
 
+    def _stop(self) -> None:
+        proc, self._proc = self._proc, None
+        if proc is None:
+            return
+        try:
+            if proc.stdout is not None:
+                proc.stdout.close()
+            proc.kill()
+            proc.wait(timeout=2.0)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _read(self) -> np.ndarray | None:
+        assert self._proc is not None and self._proc.stdout is not None
+        n = self._frame_bytes
+        chunks = []
+        got = 0
+        while got < n:
+            chunk = self._proc.stdout.read(n - got)
+            if not chunk:
+                return None  # fin del video
+            chunks.append(chunk)
+            got += len(chunk)
+        self._next_index += 1
+        data = b"".join(chunks) if len(chunks) > 1 else chunks[0]
+        return np.frombuffer(data, np.uint8).reshape(self.height, self.width, 3)
+
+    # ------------------------------------------------------------ API
     def frame_at(self, t: float, loop: bool) -> np.ndarray:
         """Frame RGB uint8 en el segundo t del video (con bucle o congelando el último frame)."""
         if loop:
@@ -110,33 +164,29 @@ class VideoSource:
         idx = min(max(idx, 0), self.n_frames - 1)
         if idx == self._last_index and self._last_frame is not None:
             return self._last_frame
-        gap = idx - self._last_index
-        if 1 < gap <= self.MAX_SKIP:
-            # saltos cortos (video a más fps que el proyecto, velocidad > 1): descartar frames sin decodificar del todo
-            for _ in range(gap - 1):
-                if not self.cap.grab():
+        gap = idx - self._next_index if self._proc is not None else None
+        if gap is None or gap < 0 or gap > self.MAX_SKIP:
+            self._start(idx)
+        else:
+            for _ in range(gap):  # saltos cortos: descartar frames ya decodificados
+                if self._read() is None:
                     break
-        elif gap != 1:
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-        ok, bgr = self.cap.read()
-        if not ok:
-            # Fin inesperado (p. ej. recuento de frames impreciso): volver al principio o repetir el último
+        frame = self._read()
+        if frame is None:
+            # Fin inesperado (duración imprecisa): volver al principio o repetir el último
             if self._last_frame is not None and not loop:
                 return self._last_frame
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-            ok, bgr = self.cap.read()
-            if not ok:
+            self._start(0)
+            frame = self._read()
+            if frame is None:
                 raise RuntimeError(f"No se pudo leer el video de fondo: {self.path}")
             idx = 0
         self._last_index = idx
-        self._last_frame = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        return self._last_frame
+        self._last_frame = frame
+        return frame
 
     def release(self) -> None:
-        try:
-            self.cap.release()
-        except Exception:  # noqa: BLE001
-            pass
+        self._stop()
 
 
 class Background:
@@ -206,14 +256,14 @@ class Background:
         t = cfg.video_start + (index / self.ctx.fps) * cfg.video_speed
         rgb = self.video.frame_at(t, cfg.video_loop)
         fitted = fit_image(rgb, self.ctx.width, self.ctx.height, cfg.image_fit, cfg.focus)
-        if cfg.blur > 0:
+        if cfg.blur > 0 and self.wants_float:  # el backend GPU desenfoca en un shader (gpu_blur_sigma)
             img = np.multiply(fitted, np.float32(1.0 / 255.0), dtype=np.float32)
             img = fast_blur(img, self.ctx.px(cfg.blur))
             if cfg.darken > 0:
                 img *= np.float32(1.0 - cfg.darken)
             return _VideoFrame(u8=None, f32=img)
         if cfg.darken > 0:
-            fitted = cv2.convertScaleAbs(fitted, alpha=1.0 - cfg.darken)
+            fitted = scale_uint8(fitted, 1.0 - cfg.darken)
         vf = _VideoFrame(u8=fitted, f32=None)
         if self.wants_float:
             vf.f32  # noqa: B018 - se calcula ya, en el hilo auxiliar, para que el principal no lo haga
@@ -230,6 +280,12 @@ class Background:
         if frame.index + 1 < self._n_frames:
             self._lookahead.schedule(frame.index + 1)
         return vf
+
+    def gpu_blur_sigma(self) -> float:
+        """Sigma (px) con el que el backend GPU debe desenfocar el video de fondo (0 = nada que hacer)."""
+        if self.video is None or self.ctx is None or self.cfg.blur <= 0 or self.wants_float:
+            return 0.0
+        return float(self.ctx.px(self.cfg.blur))
 
     def close(self) -> None:
         """Detiene el hilo de decodificación y libera el video."""
@@ -276,7 +332,7 @@ class Background:
         if self.video is not None:
             return self._video_frame(frame).u8
         src = self.source(frame, section_colors)
-        return cv2.convertScaleAbs(np.clip(src, 0, 1), alpha=255.0)
+        return to_uint8(src)
 
     def motion(self, frame: FrameFeatures) -> tuple[float, float, float, float, float]:
         """(zoom, dx, dy, ángulo en grados, ganancia de brillo) del frame (compartido CPU/GPU)."""

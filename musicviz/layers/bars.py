@@ -1,11 +1,11 @@
 """Espectro de barras (estilo Monstercat / NCS) con espejo, simetría, gradientes y estilos."""
 from __future__ import annotations
 
-import cv2
 import numpy as np
 
 from ..audio.analysis import AudioFeatures, FrameFeatures
 from ..config import BarsLayer
+from ..utils.imaging import cv2  # opcional: sólo lo usa el render CPU
 from ..render.canvas import Canvas, RenderContext
 from ..utils.color import to_cv
 from .base import Layer

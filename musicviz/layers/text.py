@@ -8,7 +8,6 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
-import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -16,6 +15,7 @@ from ..audio.analysis import AudioFeatures, FrameFeatures
 from ..config import TextLayer
 from ..render.canvas import Canvas, RenderContext, anchor_center, paste_rgba, rounded_rect_mask
 from ..utils.color import parse_color
+from ..utils.imaging import blur_u8, cv2
 from .base import Layer
 
 _FONT_CANDIDATES = [
@@ -188,7 +188,7 @@ class TextOverlay(Layer[TextLayer]):
             sh = np.zeros((h + 2 * pad, w + 2 * pad, 4), np.uint8)
             sh[pad : pad + h, pad : pad + w, 3] = sprite[..., 3]
             if blur > 0.5:
-                sh[..., 3] = cv2.GaussianBlur(sh[..., 3], (0, 0), blur)
+                sh[..., 3] = blur_u8(sh[..., 3], blur)
             sh[..., 3] = (sh[..., 3].astype(np.float32) * min(cfg.shadow, 1.0)).astype(np.uint8)
             self.shadow_sprite = sh
         self.base_scale = 1.0 / over

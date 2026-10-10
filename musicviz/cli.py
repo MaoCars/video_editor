@@ -147,17 +147,13 @@ def snapshot(
     scale: float = typer.Option(1.0, "--scale", "-s", min=0.05, max=2.0),
 ):
     """Guarda un solo frame como imagen para ajustar el diseño sin renderizar todo."""
-    import cv2
-
     from .render.engine import render_frame_image
+    from .utils.imaging import save_image
 
     cfg = _load_project(project)
     features = _analyze(cfg)
     img = render_frame_image(cfg, features, time_s, scale)
-    if img.shape[2] == 4:
-        cv2.imwrite(str(output), cv2.cvtColor(img, cv2.COLOR_RGBA2BGRA))  # PNG con transparencia
-    else:
-        cv2.imwrite(str(output), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+    save_image(output, img)  # PNG con transparencia si el proyecto es transparente
     console.print(f"[green]Frame guardado:[/green] {output}" + (" (con canal alfa)" if img.shape[2] == 4 else ""))
 
 
@@ -292,12 +288,12 @@ def check():
     from .render.player import player_available
 
     table.add_row("Ventana OpenGL (glfw)", "instalado" if player_available() else "[yellow]no instalado (pip install glfw)[/yellow]")
-    try:
-        import cv2
+    from .utils.imaging import cv2
 
-        table.add_row("OpenCV", cv2.__version__)
-    except ImportError:
-        table.add_row("OpenCV", "[red]no instalado[/red]")
+    if cv2 is not None:
+        table.add_row("Backend CPU (OpenCV)", cv2.__version__)
+    else:
+        table.add_row("Backend CPU (OpenCV)", "[yellow]no instalado: sólo render por GPU (pip install opencv-python-headless)[/yellow]")
     try:
         import sounddevice  # noqa: F401
 

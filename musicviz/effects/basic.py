@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 
-import cv2
 import numpy as np
 
 from ..audio.analysis import AudioFeatures, FrameFeatures
@@ -23,10 +22,13 @@ from ..config import (
 )
 from ..render.canvas import RenderContext, fast_blur
 from ..utils.color import parse_color
+from ..utils.imaging import cv2  # opcional: los efectos CPU lo necesitan; los GPU usan shaders
 from .base import Effect
 
 
-def _zoom(img: np.ndarray, factor: float, angle: float = 0.0, dx: float = 0.0, dy: float = 0.0, border=cv2.BORDER_REFLECT) -> np.ndarray:
+def _zoom(img: np.ndarray, factor: float, angle: float = 0.0, dx: float = 0.0, dy: float = 0.0, border=None) -> np.ndarray:
+    if border is None:
+        border = cv2.BORDER_REFLECT
     h, w = img.shape[:2]
     M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, factor)
     M[0, 2] += dx

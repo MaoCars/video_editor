@@ -9,10 +9,12 @@ from musicviz.config import ProjectConfig
 from musicviz.presets import load_preset
 from musicviz.render.engine import Scene, iter_frames, make_scene, resolve_backend
 from musicviz.render.gpu import gpu_available
+from musicviz.utils.imaging import HAS_CV2, resize, save_image
 
 pytestmark = pytest.mark.skipif(not gpu_available(), reason="sin contexto OpenGL disponible")
 
 W, H = 320, 180
+needs_cpu = pytest.mark.skipif(not HAS_CV2, reason="la paridad con el backend CPU necesita OpenCV")
 
 
 def _project(audio_cfg, **extra):
@@ -32,10 +34,15 @@ def _diff(a, b):
 
 def test_backend_resolution(monkeypatch):
     assert resolve_backend("auto") == "gpu"
-    assert resolve_backend("cpu") == "cpu"
     assert resolve_backend("gpu") == "gpu"
+    if HAS_CV2:
+        assert resolve_backend("cpu") == "cpu"
+    else:
+        with pytest.raises(RuntimeError, match="OpenCV"):
+            resolve_backend("cpu")
 
 
+@needs_cpu
 @pytest.mark.parametrize("preset", ["trap_nation", "monstercat", "ncs", "dnb_glitch", "auto_sections", "spectrum_only"])
 def test_presets_match_cpu(audio_cfg, features, preset):
     project = load_preset(preset, audio_cfg.file)
@@ -51,14 +58,13 @@ def test_presets_match_cpu(audio_cfg, features, preset):
         gpu.close()
 
 
+@needs_cpu
 def test_layers_and_effects_match_cpu(audio_cfg, features, tmp_path):
-    import cv2
-
     photo = tmp_path / "p.png"
     img = np.zeros((90, 160, 3), np.uint8)
-    img[:, :80] = (255, 60, 0)
-    img[:, 80:] = (0, 200, 255)
-    cv2.imwrite(str(photo), img)
+    img[:, :80] = (0, 60, 255)
+    img[:, 80:] = (255, 200, 0)
+    save_image(photo, img)
     layers = [
         {"type": "bars", "colors": ["#ffffff", "#00ffff"], "glow": 0.3, "mirror": True, "symmetric": True},
         {"type": "circle", "colors": ["#ff2a6d", "#ffd166"], "rings": 2, "glow": 0.5, "style": "filled", "position": [0.3, 0.5], "radius": 0.15},
@@ -116,7 +122,11 @@ def test_no_gpu_env_forces_cpu(audio_cfg, features, monkeypatch):
     monkeypatch.setenv("MUSICVIZ_NO_GPU", "1")
     gpu_available.cache_clear()
     try:
-        assert resolve_backend("auto") == "cpu"
+        if HAS_CV2:
+            assert resolve_backend("auto") == "cpu"
+        else:
+            with pytest.raises(RuntimeError, match="OpenCV"):
+                resolve_backend("auto")
         with pytest.raises(RuntimeError):
             resolve_backend("gpu")
     finally:
@@ -151,8 +161,6 @@ def test_render_many_matches_render(audio_cfg, features, tmp_path):
 # ---------------------------------------------------------------- reproductor OpenGL
 def test_screen_blit_keeps_orientation_and_aspect(audio_cfg, features):
     """Lo que se dibuja en pantalla es el frame final (misma orientación) con bandas negras si cambia la proporción."""
-    import cv2
-
     from musicviz.render.gpu import GL_LOCK
     from musicviz.render.player import ScreenBlit
 
@@ -189,7 +197,7 @@ def test_screen_blit_keeps_orientation_and_aspect(audio_cfg, features):
             tex.release()
             blit2.release()
         assert tall[:40].max() == 0 and tall[-40:].max() == 0
-        small = cv2.resize(ref, (160, 90), interpolation=cv2.INTER_AREA)
+        small = resize(ref, 160, 90)
         assert np.abs(tall[45:135].astype(int) - small.astype(int)).mean() < 12
     finally:
         gpu.close()

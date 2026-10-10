@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import math
 
-import cv2
 import numpy as np
 
 from ..audio.analysis import AudioFeatures, FrameFeatures
 from ..config import WaveformLayer
+from ..utils.imaging import cv2  # opcional: sólo lo usa el render CPU
 from ..render.canvas import Canvas, RenderContext
 from ..utils.color import to_cv
 from ..utils.mathx import moving_average

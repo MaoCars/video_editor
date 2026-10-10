@@ -47,6 +47,7 @@ Para crear el ejecutable tú mismo: `build_exe.bat` (o `python packaging/build.p
    .\.venv\Scripts\activate
    pip install -e .
    pip install sounddevice   # opcional: audio en la vista previa
+   pip install -e .[cpu]     # opcional: backend de render por CPU (OpenCV) para equipos sin OpenGL 3.3
    ```
 4. Verifica el entorno:
    ```powershell
@@ -499,7 +500,8 @@ musicviz/
   layers/             # background, bars, circle, waveform, particles, image, text, progress
   effects/            # glitch, bloom, chromatic, shake, vignette, color, pixelate, strobe, ...
   render/canvas.py    # lienzo float RGB + composición de capas RGBA con glow y blend modes
-  render/engine.py    # SceneBase/Scene (CPU), render por frame, pool de procesos, elección de motor
+  render/engine.py    # SceneBase/Scene (CPU, requiere OpenCV), render por frame, pool de procesos, elección de motor
+  utils/imaging.py    # carga/encaje/máscaras/desenfoques con Pillow+NumPy (sin OpenCV); utils/tools.py localiza ffmpeg
   render/gpu/         # motor GPU: shaders GLSL (shaders.py) y GpuScene (scene.py) que reutiliza la geometría de las capas
   render/exporter.py  # ffmpeg (NVENC / libx264) + mezcla de audio
   render/player.py    # reproductor OpenGL a resolución completa (glfw); render/preview.py es la vista previa Tk clásica

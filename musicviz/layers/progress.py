@@ -1,11 +1,11 @@
 """Barra de progreso de la canción, opcionalmente con tiempo transcurrido / total."""
 from __future__ import annotations
 
-import cv2
 import numpy as np
 
 from ..audio.analysis import AudioFeatures, FrameFeatures
 from ..config import ProgressLayer
+from ..utils.imaging import cv2  # opcional: sólo lo usa el render CPU
 from ..render.canvas import Canvas, RenderContext, paste_rgba
 from ..utils.color import parse_color, to_cv
 from .base import Layer

@@ -5,13 +5,13 @@ import multiprocessing as mp
 import os
 from typing import Callable, Iterable, Iterator, Optional
 
-import cv2
 import numpy as np
 
 from ..audio.analysis import AudioFeatures, analyze
 from ..config import ProjectConfig
 from ..effects import build_effect
 from ..layers import Background, build_layer
+from ..utils.imaging import HAS_CV2, cv2, require_cv2
 from .canvas import Canvas, RenderContext, float_to_uint8, premultiplied_to_rgba8
 from .sections import SectionTimeline, resolve_sections
 
@@ -81,6 +81,7 @@ class Scene(SceneBase):
     """Backend CPU (NumPy + OpenCV)."""
 
     def __init__(self, project: ProjectConfig, features: AudioFeatures, width: int, height: int):
+        require_cv2()
         super().__init__(project, features, width, height)
         self.canvas = Canvas(width, height, track_alpha=self.transparent)
 
@@ -112,6 +113,7 @@ class Scene(SceneBase):
 def resolve_backend(requested: str) -> str:
     """'gpu' o 'cpu' según lo pedido y la disponibilidad de OpenGL."""
     if requested == "cpu":
+        require_cv2("El backend CPU")
         return "cpu"
     from .gpu import gpu_available
 
@@ -119,6 +121,11 @@ def resolve_backend(requested: str) -> str:
         return "gpu"
     if requested == "gpu":
         raise RuntimeError("El backend GPU no está disponible (no se pudo crear un contexto OpenGL). Usa backend: cpu.")
+    if not HAS_CV2:
+        raise RuntimeError(
+            "No hay OpenGL 3.3 disponible para el backend GPU y el backend CPU (OpenCV) no está instalado. "
+            "Actualiza los controladores gráficos o instala OpenCV: pip install opencv-python-headless"
+        )
     return "cpu"
 
 
@@ -167,7 +174,8 @@ _SCENE: Optional[Scene] = None
 
 def _init_worker(project_dict: dict, features: AudioFeatures, width: int, height: int) -> None:
     global _SCENE
-    cv2.setNumThreads(1)
+    if cv2 is not None:
+        cv2.setNumThreads(1)
     project = ProjectConfig.model_validate(project_dict)
     _SCENE = Scene(project, features, width, height)  # los procesos auxiliares siempre usan CPU
 

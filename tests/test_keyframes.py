@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 
+cv2 = pytest.importorskip("cv2", reason="estas pruebas usan el backend CPU (OpenCV)")
+
 from musicviz.config import PointKey, ProjectConfig, ScalarKey, TextLayer
 from musicviz.layers.keyframes import current_value, evaluate, has_keys, key_state
 from musicviz.render.engine import Scene

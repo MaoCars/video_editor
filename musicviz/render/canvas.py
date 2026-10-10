@@ -4,23 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-import cv2
 import numpy as np
 
-
-def fast_blur(img: np.ndarray, sigma: float) -> np.ndarray:
-    """Desenfoque gaussiano rápido: para sigmas grandes reduce la imagen antes de filtrar."""
-    if sigma <= 0.5:
-        return img
-    h, w = img.shape[:2]
-    factor = 1
-    while sigma / factor > 3.0 and min(h, w) // (factor * 2) >= 8:
-        factor *= 2
-    if factor == 1:
-        return cv2.GaussianBlur(img, (0, 0), sigma)
-    small = cv2.resize(img, (max(w // factor, 1), max(h // factor, 1)), interpolation=cv2.INTER_AREA)
-    small = cv2.GaussianBlur(small, (0, 0), sigma / factor)
-    return cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+from ..utils.imaging import cv2, fast_blur, rounded_rect_mask, to_uint8  # noqa: F401 - reexportados
 
 
 @dataclass
@@ -151,9 +137,8 @@ class Canvas:
 
 
 def float_to_uint8(img: np.ndarray) -> np.ndarray:
-    """float32 [0,1] -> uint8 con saturación (rápido vía OpenCV)."""
-    img = np.clip(img, 0.0, 1.0)
-    return cv2.convertScaleAbs(img, alpha=255.0)
+    """float32 [0,1] -> uint8 con saturación."""
+    return to_uint8(img)
 
 
 def premultiplied_to_rgba8(img4: np.ndarray) -> np.ndarray:
@@ -166,8 +151,8 @@ def premultiplied_to_rgba8(img4: np.ndarray) -> np.ndarray:
     alpha = np.maximum(np.clip(img4[..., 3:4], 0.0, 1.0), np.clip(rgb.max(axis=2, keepdims=True), 0.0, 1.0))
     straight = np.where(alpha > 1e-4, rgb / np.maximum(alpha, 1e-4), 0.0)
     out = np.empty(img4.shape[:2] + (4,), np.uint8)
-    out[..., :3] = cv2.convertScaleAbs(np.clip(straight, 0.0, 1.0), alpha=255.0)
-    out[..., 3] = cv2.convertScaleAbs(alpha[..., 0], alpha=255.0)
+    out[..., :3] = to_uint8(straight)
+    out[..., 3] = to_uint8(alpha[..., 0])
     return out
 
 
@@ -206,23 +191,6 @@ def anchor_center(x: float, y: float, w: float, h: float, anchor: str) -> tuple[
     elif "bottom" in anchor:
         ay = 1.0
     return x + (0.5 - ax) * w, y + (0.5 - ay) * h
-
-
-def rounded_rect_mask(w: int, h: int, radius: float, shape: str = "rounded") -> np.ndarray:
-    """Máscara uint8 (h, w): rectángulo, rectángulo redondeado o elipse."""
-    mask = np.zeros((h, w), np.uint8)
-    if shape == "circle":
-        cv2.ellipse(mask, (w // 2, h // 2), (max(w // 2 - 1, 1), max(h // 2 - 1, 1)), 0, 0, 360, 255, -1, cv2.LINE_AA)
-        return mask
-    r = int(max(min(radius, w / 2, h / 2), 0))
-    if shape != "rounded" or r <= 0:
-        mask[:] = 255
-        return mask
-    cv2.rectangle(mask, (r, 0), (w - 1 - r, h - 1), 255, -1)
-    cv2.rectangle(mask, (0, r), (w - 1, h - 1 - r), 255, -1)
-    for cx, cy in ((r, r), (w - 1 - r, r), (r, h - 1 - r), (w - 1 - r, h - 1 - r)):
-        cv2.circle(mask, (cx, cy), r, 255, -1, cv2.LINE_AA)
-    return mask
 
 
 def over_checkerboard(rgba: np.ndarray, cell: int = 16) -> np.ndarray:

@@ -4,7 +4,6 @@ from __future__ import annotations
 import math
 from typing import Iterable, Iterator, Optional
 
-import cv2
 import moderngl
 import numpy as np
 
@@ -205,8 +204,13 @@ class GpuScene(SceneBase):
                 self._bg_tex.write(data)
             self._bg_key = key
         zoom, dx, dy, angle, gain = bg.motion(frame)
+        tex = self._bg_tex
+        sigma = bg.gpu_blur_sigma()
+        if sigma > 0:  # el video de fondo llega sin desenfocar: se desenfoca aquí, no en la CPU
+            tex = self._blurred(tex, sigma)
+            self.canvas_fbo.use()
         self.gl.disable(moderngl.BLEND)
-        self._fullscreen(self.p_bg, self._bg_tex, u_zoom=float(zoom), u_angle=math.radians(angle), u_shift=(float(dx), float(dy)), u_gain=float(gain))
+        self._fullscreen(self.p_bg, tex, u_zoom=float(zoom), u_angle=math.radians(angle), u_shift=(float(dx), float(dy)), u_gain=float(gain))
 
     # ------------------------------------------------------------------ capas
     def _composite_layer(self, layer) -> None:

@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 
+cv2 = pytest.importorskip("cv2", reason="estas pruebas usan el backend CPU (OpenCV)")
+
 from musicviz.config import ProjectConfig
 from musicviz.presets import load_preset
 from musicviz.render.canvas import Canvas, paste_rgba

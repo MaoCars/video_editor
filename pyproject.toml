@@ -11,7 +11,6 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = [
     "numpy>=1.24",
-    "opencv-python-headless>=4.8",
     "pyyaml>=6.0",
     "pydantic>=2.0",
     "typer>=0.9",
@@ -23,6 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cpu = ["opencv-python-headless>=4.8"]  # backend de render por CPU (sin GPU/OpenGL)
 preview-audio = ["sounddevice>=0.4"]
 dev = ["pytest>=7.0"]
 

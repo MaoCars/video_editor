@@ -2,9 +2,10 @@
 import shutil
 import subprocess
 
-import cv2
 import numpy as np
 import pytest
+
+cv2 = pytest.importorskip("cv2", reason="estas pruebas usan el backend CPU (OpenCV)")
 
 from musicviz.config import ImageLayer, ProjectConfig, TextLayer
 from musicviz.layers.image import fit_into_box
