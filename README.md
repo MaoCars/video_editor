@@ -18,9 +18,10 @@ el render usa varios núcleos de CPU en paralelo y la codificación del video se
 
 En la pestaña **Actions** del repositorio (o en **Releases** cuando haya una versión etiquetada) está el ZIP
 `musicviz-<versión>-windows-x64.zip`, generado automáticamente en cada cambio de `main`. Descomprímelo donde
-quieras y haz doble clic en `musicviz-gui.exe`. Incluye Python, todas las librerías y ffmpeg (carpeta `bin`),
+quieras y haz doble clic en `musicviz-gui.exe`. Incluye Python, todas las librerías y un ffmpeg compilado a medida con
+sólo lo que usa la app (carpeta `bin`, unos 15 MB en vez de los 80 MB del ffmpeg completo),
 así que no hay nada más que instalar. `musicviz.exe` es la versión de línea de comandos (`musicviz.exe check`,
-`musicviz.exe render proyecto.yaml`...). Pesa unos 85 MB comprimido. El ejecutable renderiza con la GPU (cualquier
+`musicviz.exe render proyecto.yaml`...). Pesa unos 55 MB comprimido. El ejecutable renderiza con la GPU (cualquier
 tarjeta con OpenGL 3.3, incluidas las integradas); el backend por CPU (OpenCV) sólo está en la instalación con `pip`.
 
 Para crear el ejecutable tú mismo: `build_exe.bat` (o `python packaging/build.py --ffmpeg --zip`).

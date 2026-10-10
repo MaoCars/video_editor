@@ -10,7 +10,8 @@
 #   - decodificar el video de fondo a RGB por tubería: h264, hevc, vp8/vp9, mpeg4, prores, mjpeg, gif...
 #   - fuentes lavfi (color, testsrc2, sine, concat): la app comprueba los encoders con `-f lavfi -i color=...`
 #     y las pruebas generan clips sintéticos con ellas
-# En Windows se enlaza estático (un único ffmpeg.exe de ~20 MB en vez de los ~80 MB del paquete "essentials").
+# En Windows se enlaza estático (un único ffmpeg.exe de ~15 MB en vez de los ~80 MB del paquete "essentials").
+# Los encoders NVENC se compilan siempre (sólo necesitan las cabeceras); en tiempo de ejecución usan el driver NVIDIA.
 set -euo pipefail
 SRC=${1:?ruta al código fuente de ffmpeg}
 PREFIX=${2:?carpeta de instalación}
@@ -18,7 +19,7 @@ shift 2
 
 DECODERS=h264,hevc,vp8,vp9,mpeg4,mpeg2video,mpeg1video,msmpeg4v3,wmv2,theora,prores,mjpeg,png,gif,rawvideo,wrapped_avframe
 DECODERS+=,mp3,mp3float,aac,aac_latm,flac,vorbis,opus,alac,wmav2,ac3,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le,pcm_u8,pcm_s16be,pcm_s24be
-ENCODERS=libx264,aac,libopus,prores_ks,libvpx_vp9,png,qtrle,rawvideo,wrapped_avframe,pcm_f32le,pcm_s16le
+ENCODERS=libx264,h264_nvenc,hevc_nvenc,aac,libopus,prores_ks,libvpx_vp9,png,qtrle,rawvideo,wrapped_avframe,pcm_f32le,pcm_s16le
 DEMUXERS=mov,matroska,avi,mpegts,mpegps,mpegvideo,image2,mp3,aac,flac,ogg,wav,aiff,asf,rawvideo,gif
 MUXERS=mp4,mov,ipod,matroska,webm,image2,null,rawvideo,pcm_f32le,pcm_s16le,wav
 PARSERS=h264,hevc,vp8,vp9,mpeg4video,mpegvideo,mpegaudio,aac,aac_latm,flac,vorbis,opus,png,mjpeg,ac3
