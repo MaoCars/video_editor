@@ -32,6 +32,7 @@ TEXT = "#d8d8e0"
 WAVE = "#5a7fd6"
 BEAT = "#6d6d80"
 KICK = "#ff6b6b"
+LOOP_COL = "#ffd166"
 CURSOR = "#ff3b3b"
 LAYER_COL = "#43a86f"
 EFFECT_COL = "#d99a2b"
@@ -58,6 +59,7 @@ class Timeline(ttk.Frame):
         super().__init__(master)
         self.on_seek, self.on_select, self.on_change, self.on_section_change = on_seek, on_select, on_change, on_section_change
         self.on_key_move, self.on_key_edit, self.on_key_add, self.on_key_delete = on_key_move, on_key_edit, on_key_add, on_key_delete
+        self.loop: Optional[tuple[float, float]] = None
         self.project: Optional[ProjectConfig] = None
         self.features: Optional[AudioFeatures] = None
         self.duration = 60.0
@@ -125,6 +127,11 @@ class Timeline(ttk.Frame):
         self.canvas.itemconfigure("cursor_label", text=_fmt(t))
         self.canvas.coords("cursor_label", min(max(x + 4, LABEL_W + 4), self.canvas.winfo_width() - 30), 2)
 
+    def set_loop(self, rng: Optional[tuple[float, float]]) -> None:
+        """Tramo A-B que se repite al reproducir (None = sin bucle)."""
+        self.loop = rng
+        self.redraw()
+
     def set_selected(self, kind: Optional[str], idx: Optional[int]) -> None:
         self.selected = (kind, idx) if kind is not None and idx is not None else None
         self.redraw()
@@ -165,6 +172,12 @@ class Timeline(ttk.Frame):
         self._draw_ruler(W)
         self._draw_audio(W)
         self._draw_sections(W)
+        if self.loop is not None and self.features is not None:
+            xa, xb = self._t2x(self.loop[0]), self._t2x(self.loop[1])
+            c.create_rectangle(xa, 0, xb, H, fill=LOOP_COL, stipple="gray25", outline="", tags="loop")
+            for x, label in ((xa, "A"), (xb, "B")):
+                c.create_line(x, 0, x, H, fill=LOOP_COL, dash=(3, 3), tags="loop")
+                c.create_text(x + 3, RULER_H - 2, anchor="sw", text=label, fill=LOOP_COL, font=("TkDefaultFont", 8, "bold"), tags="loop")
         y = RULER_H + AUDIO_H + SECTION_H
         for row in self._rows:
             if row["kind"] == "keys":

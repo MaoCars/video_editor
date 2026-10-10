@@ -87,7 +87,8 @@ musicviz gui mi_video.yaml   # abrir un proyecto existente
   Los campos de colores muestran una fila de muestras: clic en una muestra para cambiarla, **×** para quitarla,
   **+** para añadir con el selector de color y **⇄** para invertir el degradado.
 - **Vista previa**: se actualiza sola al cambiar cualquier valor (casilla *Auto*), con control de tiempo,
-  calidad y botón *Reproducir* (con audio si instalaste `sounddevice`).
+  calidad y botón *Reproducir* (con audio si instalaste `sounddevice`). Mientras arrastras el tiempo o una capa se
+  renderiza a baja resolución y, al soltar, a la calidad elegida.
 - **Ventana GL**: abre un reproductor OpenGL en una ventana aparte a la resolución real del proyecto (1080p, 4K…),
   dibujado directamente por la GPU sin pasar por la CPU: lo que ves es exactamente el render final, a la velocidad
   real. ESC o Q cierra, ESPACIO pausa, ←/→ salta 5 s, Inicio vuelve al principio y F alterna pantalla completa.
@@ -102,8 +103,15 @@ musicviz gui mi_video.yaml   # abrir un proyecto existente
   atenuados los tramos donde la sección no los permite. Clic en el audio para saltar, clic en una barra para
   seleccionar ese elemento, arrastrar sus bordes para cambiar inicio y fin, arrastrarla entera para moverla,
   arrastrar el límite entre dos secciones para ajustarlo, rueda para hacer zoom y Shift+rueda para desplazarse.
-- **Renderizar video**: render completo o un fragmento (*Desde* / *Duración* / *Escala*) con barra de progreso;
-  la ventana sigue usable mientras tanto y el botón *Cancelar* detiene el render y borra el archivo parcial.
+- **Bucle A‑B**: los botones *A* y *B* marcan el instante actual como inicio y fin de un tramo (sombreado en la
+  timeline) y la casilla *Bucle* lo repite al reproducir, también en la ventana GL: ideal para ajustar un drop
+  sin escuchar toda la canción.
+- **Deshacer / rehacer** (Ctrl+Z / Ctrl+Y, menú *Editar*): cada cambio del proyecto se puede deshacer, hasta 100 pasos.
+- **Autoguardado**: unos segundos después de cada cambio se guarda una copia; si la aplicación se cierra sin guardar,
+  al abrirla de nuevo ofrece recuperar el proyecto.
+- **Renderizar video**: render completo o un fragmento (*Desde* / *Duración* / *Escala*) con barra de progreso,
+  velocidad y tiempo restante; la ventana sigue usable mientras tanto y el botón *Cancelar* detiene el render y
+  borra el archivo parcial. Al terminar suena un aviso, la ventana pasa al frente y *Abrir carpeta* lleva al video.
 - *Archivo → Guardar* escribe el YAML, que también puedes editar a mano o usar con la línea de comandos.
   *Archivo → Recientes* recuerda los últimos 10 proyectos abiertos o guardados.
 

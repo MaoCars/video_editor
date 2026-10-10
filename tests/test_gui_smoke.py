@@ -291,3 +291,40 @@ def test_gui_quick_preview_while_scrubbing(app):
     app._on_time_drag()
     assert app._quick_preview and app._settle_after is not None
     assert _pump(app, lambda: not app._quick_preview and app._settle_after is None, timeout=10)
+
+
+def test_gui_ab_loop_playback(app):
+    assert _pump(app, lambda: app._features is not None)
+    app.time_var.set(0.5)
+    app._set_loop_a()
+    app.time_var.set(1.0)
+    app._set_loop_b()
+    assert app.loop_var.get() and app._loop_range() == (0.5, 1.0)
+    assert app.timeline.loop == (0.5, 1.0)
+    app.time_var.set(2.5)  # fuera del tramo: la reproducción empieza en A
+    app._start_play()
+    deadline = time.time() + 1.6
+    seen = []
+    while time.time() < deadline:
+        app.update()
+        seen.append(float(app.time_var.get()))
+        time.sleep(0.02)
+    assert app._playing, app.status_var.get()
+    played = [t for t in seen if t != 2.5]
+    assert played and min(played) >= 0.5 and max(played) <= 1.05, (min(played), max(played))
+    app._stop_play()
+    # B antes de A invalida A; desactivar deja el timeline sin bucle
+    app.time_var.set(0.2)
+    app._set_loop_b()
+    assert app._loop_a is None and app._loop_range() == (0.0, 0.2)
+    app.loop_var.set(False)
+    app._loop_toggled()
+    assert app._loop_range() is None and app.timeline.loop is None
+
+
+def test_eta_text():
+    from musicviz.gui.app import _eta_text
+
+    assert _eta_text(2, 100, 1.0, 30) == ""
+    txt = _eta_text(50, 100, 10.0, 30)
+    assert "quedan 0:10" in txt and "0.17x" in txt

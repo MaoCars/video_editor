@@ -374,6 +374,10 @@ class App(tk.Tk):
         self._snapshot = self.project.model_dump_json()
         self._autosave_after: Optional[str] = None
         self._settle_after: Optional[str] = None
+        self._loop_a: Optional[float] = None  # bucle A-B de reproducción
+        self._loop_b: Optional[float] = None
+        self._last_output: Optional[Path] = None
+        self._render_t0 = 0.0
 
         self._build_menu()
         self._build_ui()
@@ -489,6 +493,11 @@ class App(tk.Tk):
         self.play_btn.pack(side="left", padx=4)
         self.window_btn = ttk.Button(ctl, text="⧉ Ventana GL", command=self._toggle_player, width=13)
         self.window_btn.pack(side="left", padx=(0, 4))
+        self.loop_var = tk.BooleanVar(value=False)
+        ttk.Button(ctl, text="A", width=2, command=self._set_loop_a).pack(side="left")
+        ttk.Button(ctl, text="B", width=2, command=self._set_loop_b).pack(side="left", padx=(2, 0))
+        self.loop_check = ttk.Checkbutton(ctl, text="Bucle", variable=self.loop_var, command=self._loop_toggled)
+        self.loop_check.pack(side="left", padx=(2, 4))
         ttk.Button(ctl, text="Actualizar", command=lambda: self._request_preview(force=True)).pack(side="left", padx=4)
         self.auto_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(ctl, text="Auto", variable=self.auto_var).pack(side="left")
@@ -516,6 +525,8 @@ class App(tk.Tk):
         self.render_btn.pack(side="left")
         self.cancel_btn = ttk.Button(bottom, text="✖ Cancelar", command=self._cancel_render, state="disabled")
         self.cancel_btn.pack(side="left", padx=(4, 0))
+        self.open_btn = ttk.Button(bottom, text="📂 Abrir carpeta", command=self._open_last_output, state="disabled")
+        self.open_btn.pack(side="left", padx=(4, 0))
         ttk.Label(bottom, text="Desde (s):").pack(side="left", padx=(16, 2))
         self.r_start = tk.StringVar(value="0")
         ttk.Entry(bottom, textvariable=self.r_start, width=7).pack(side="left")
@@ -1410,14 +1421,23 @@ class App(tk.Tk):
         label = f"{_fmt(self.time_var.get())} / {_fmt(total)}"
         if self._features is not None and self.project.sections:
             try:
-                from ..render.sections import SectionTimeline, resolve_sections
-
-                name = SectionTimeline(resolve_sections(self.project, self._features)).state_at(float(self.time_var.get())).name
+                name = self._section_timeline().state_at(float(self.time_var.get())).name
                 if name:
                     label += f"  ·  {name}"
             except Exception:  # noqa: BLE001 - sección inválida a medio editar
                 pass
         self.time_label.configure(text=label)
+
+    def _section_timeline(self):
+        """Secciones resueltas para la etiqueta de tiempo, con caché (resolverlas en cada frame es caro)."""
+        from ..render.sections import SectionTimeline, resolve_sections
+
+        key = (self.project.model_dump_json(include={"sections", "sections_enabled", "auto_sections"}), id(self._features))
+        cached = getattr(self, "_section_tl_cache", None)
+        if cached is None or cached[0] != key:
+            cached = (key, SectionTimeline(resolve_sections(self.project, self._features)))
+            self._section_tl_cache = cached
+        return cached[1]
 
     # ------------------------------------------------------------------ reproducción
     def _toggle_play(self):
@@ -1434,8 +1454,11 @@ class App(tk.Tk):
         self.play_btn.configure(text="■ Detener")
         project = self.project.model_copy(deep=True)
         start = float(self.time_var.get())
+        loop = self._loop_range()
+        if loop is not None and not (loop[0] <= start < loop[1]):
+            start = loop[0]
         scale = min(PREVIEW_SCALES[self.scale_var.get()], 0.5)
-        self.renderer.submit(lambda svc: self._play_job(svc, project, start, scale), key="play")
+        self.renderer.submit(lambda svc: self._play_job(svc, project, start, scale, loop), key="play")
 
     def _stop_play(self):
         self._playing = False
@@ -1446,6 +1469,50 @@ class App(tk.Tk):
         except Exception:  # noqa: BLE001
             pass
         self.play_btn.configure(text="▶ Reproducir")
+
+    # ------------------------------------------------------------------ bucle A-B
+    def _set_loop_a(self):
+        self._loop_a = round(float(self.time_var.get()), 2)
+        if self._loop_b is not None and self._loop_b <= self._loop_a:
+            self._loop_b = None
+        self.loop_var.set(True)
+        self._loop_changed()
+
+    def _set_loop_b(self):
+        self._loop_b = round(float(self.time_var.get()), 2)
+        if self._loop_a is not None and self._loop_a >= self._loop_b:
+            self._loop_a = None
+        self.loop_var.set(True)
+        self._loop_changed()
+
+    def _loop_toggled(self):
+        if self.loop_var.get() and self._loop_a is None and self._loop_b is None:
+            self.loop_var.set(False)
+            self._set_status("Marca primero A y B (en el instante actual) para repetir un tramo")
+            return
+        self._loop_changed()
+
+    def _loop_range(self) -> Optional[tuple[float, float]]:
+        """(a, b) del bucle activo, o None. Sin A se usa el principio; sin B, el final del audio."""
+        if not self.loop_var.get() or (self._loop_a is None and self._loop_b is None):
+            return None
+        total = self._features.duration if self._features is not None else None
+        a = self._loop_a or 0.0
+        b = self._loop_b if self._loop_b is not None else total
+        if b is None or b <= a + 0.05:
+            return None
+        return (a, b)
+
+    def _loop_changed(self):
+        rng = self._loop_range()
+        self.timeline.set_loop(rng)
+        if rng is None:
+            self._set_status("Bucle desactivado" if not self.loop_var.get() else "Bucle A-B incompleto")
+        else:
+            self._set_status(f"Bucle A-B: {_fmt(rng[0])} → {_fmt(rng[1])} ({rng[1] - rng[0]:.1f} s)")
+        if self._playing:  # reiniciar la reproducción con el nuevo tramo
+            self._stop_play()
+            self._start_play()
 
     # ------------------------------------------------------------------ ventana OpenGL
     def _toggle_player(self):
@@ -1470,14 +1537,15 @@ class App(tk.Tk):
         project = self.project.model_copy(deep=True)
         start = float(self.time_var.get())
         self.window_btn.configure(state="disabled")
-        self.renderer.submit(lambda svc: self._player_job(svc, project, start), key="player")
+        loop = self._loop_range()
+        self.renderer.submit(lambda svc: self._player_job(svc, project, start, loop), key="player")
 
-    def _player_job(self, svc: RenderService, project: ProjectConfig, start: float):
+    def _player_job(self, svc: RenderService, project: ProjectConfig, start: float, loop: Optional[tuple[float, float]] = None):
         try:
             feats = self._service_features(svc, project)
             from ..render.player import launch_player
 
-            proc = launch_player(project, feats, start=start)
+            proc = launch_player(project, feats, start=start, loop=loop)
             self._queue.put(("player_started", proc))
         except Exception as exc:  # noqa: BLE001
             self._queue.put(("error", f"Ventana OpenGL: {exc}"))
@@ -1503,23 +1571,35 @@ class App(tk.Tk):
         if proc.exitcode not in (0, None, -15):
             self._set_status(f"La ventana OpenGL se cerró con error (código {proc.exitcode}); revisa la consola.")
 
-    def _play_job(self, svc: RenderService, project: ProjectConfig, start: float, scale: float):
-        """Reproducción en el hilo de render: reutiliza la escena en caché y sincroniza con el reloj (y el audio)."""
+    def _play_job(self, svc: RenderService, project: ProjectConfig, start: float, scale: float, loop: Optional[tuple[float, float]] = None):
+        """Reproducción en el hilo de render: reutiliza la escena en caché y sincroniza con el reloj (y el audio).
+        Con `loop` = (a, b) vuelve a `a` al llegar a `b`."""
         try:
             feats = self._service_features(svc, project)
             scene = svc.scene_for(project, scale)
             audio_ok = False
+            sd = None
             try:
                 import sounddevice as sd
 
                 sd.play(feats.waveform[int(start * feats.sr) :], feats.sr)
                 audio_ok = True
             except Exception:  # noqa: BLE001
+                sd = None
                 self._queue.put(("status", "Reproduciendo sin audio (instala `sounddevice` para oírlo)"))
             t0 = time.perf_counter()
             last_frame = -1
             while self._playing:
                 t = start + (time.perf_counter() - t0)
+                if loop is not None and t >= loop[1]:
+                    start, t0, t = loop[0], time.perf_counter(), loop[0]
+                    last_frame = -1
+                    if sd is not None:
+                        try:
+                            sd.stop()
+                            sd.play(feats.waveform[int(start * feats.sr) :], feats.sr)
+                        except Exception:  # noqa: BLE001
+                            pass
                 if t >= feats.duration:
                     break
                 idx = int(t * feats.fps)
@@ -1577,9 +1657,10 @@ class App(tk.Tk):
 
             feats = self._get_features_for(project)
             self._queue.put(("status", "Renderizando… (puedes seguir editando, pero no cierres la ventana)"))
+            t0 = time.perf_counter()
             result = export_video(
                 project, feats, scale=scale, start=start, duration=duration,
-                progress=lambda d, t: self._queue.put(("progress", (d, t))), cancel=self._cancel_event,
+                progress=lambda d, t: self._queue.put(("progress", (d, t, time.perf_counter() - t0))), cancel=self._cancel_event,
             )
             self._queue.put(("render_done", result))
         except ExportCancelled:
@@ -1590,9 +1671,19 @@ class App(tk.Tk):
 
     # ------------------------------------------------------------------ cola de eventos
     def _poll_queue(self):
+        # Se vacía la cola de golpe y de los frames de reproducción sólo se dibuja el último: si el hilo de
+        # render produce más deprisa de lo que Tk dibuja, la interfaz seguiría respondiendo igual.
+        events = []
         try:
-            while True:
-                kind, payload = self._queue.get_nowait()
+            while len(events) < 500:
+                events.append(self._queue.get_nowait())
+        except queue.Empty:
+            pass
+        last_play = max((i for i, (k, _) in enumerate(events) if k == "play_frame"), default=None)
+        try:
+            for i, (kind, payload) in enumerate(events):
+                if kind == "play_frame" and i != last_play:
+                    continue
                 if kind == "status":
                     self._set_status(payload)
                 elif kind == "features":
@@ -1626,9 +1717,9 @@ class App(tk.Tk):
                     self._player_proc = None
                     self.window_btn.configure(text="⧉ Ventana GL", state="normal")
                 elif kind == "progress":
-                    done, total = payload
+                    done, total, elapsed = payload
                     self.progress.configure(maximum=total, value=done)
-                    self._set_status(f"Renderizando… {done}/{total} frames ({100 * done / max(total, 1):.0f}%)")
+                    self._set_status(f"Renderizando… {done}/{total} frames ({100 * done / max(total, 1):.0f}%){_eta_text(done, total, elapsed, self.project.output.fps)}")
                 elif kind == "render_cancelled":
                     self._render_finished()
                     self.progress.configure(value=0)
@@ -1636,24 +1727,45 @@ class App(tk.Tk):
                 elif kind == "render_done":
                     self._render_finished()
                     self.progress.configure(value=self.progress["maximum"])
-                    msg = f"Video listo:\n{payload.path}\n\n{payload.width}x{payload.height} · {payload.codec} · {payload.frames} frames en {payload.seconds:.0f}s"
-                    self._set_status(f"Video listo: {payload.path}")
+                    self._last_output = Path(payload.path)
+                    self.open_btn.configure(state="normal")
+                    speed = payload.frames / max(payload.seconds, 1e-6)
+                    msg = (f"Video listo:\n{payload.path}\n\n{payload.width}x{payload.height} · {payload.codec} · {payload.frames} frames "
+                           f"en {_fmt(payload.seconds)} ({speed:.0f} fps, {speed / max(self.project.output.fps, 1):.1f}x tiempo real)")
+                    self._set_status(f"Video listo en {_fmt(payload.seconds)}: {payload.path}")
+                    self._notify_done()
                     if messagebox.askyesno("Render terminado", msg + "\n\n¿Abrir la carpeta?", parent=self):
-                        _open_folder(Path(payload.path).parent)
+                        _open_folder(self._last_output.parent)
                 elif kind == "render_error":
                     self._render_finished()
                     self._set_status("Error en el render")
                     messagebox.showerror("Error en el render", payload, parent=self)
                 elif kind == "error":
                     self._set_status(payload)
-        except queue.Empty:
-            pass
-        self.after(50, self._poll_queue)
+        except Exception:  # noqa: BLE001 - un evento con error no debe detener el bucle de la interfaz
+            traceback.print_exc()
+        self.after(40, self._poll_queue)
 
     def _render_finished(self):
         self._rendering = False
         self.render_btn.configure(state="normal", text="🎬 Renderizar video")
         self.cancel_btn.configure(state="disabled")
+
+    def _notify_done(self):
+        """Avisa de que el render terminó aunque la ventana esté detrás: sonido y traer al frente."""
+        try:
+            self.bell()
+            self.deiconify()
+            self.lift()
+            self.attributes("-topmost", True)
+            self.after(300, lambda: self.attributes("-topmost", False))
+        except tk.TclError:
+            pass
+
+    def _open_last_output(self):
+        if self._last_output is None:
+            return
+        _open_folder(self._last_output if self._last_output.is_dir() else self._last_output.parent)
 
     def _check_env(self):
         from ..render.exporter import ExportError, available_encoders, encoder_works, ffmpeg_path
@@ -1767,6 +1879,15 @@ def get_literal_default(cls) -> str:
 def _fmt(seconds: float) -> str:
     seconds = max(int(seconds), 0)
     return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def _eta_text(done: int, total: int, elapsed: float, fps: float) -> str:
+    """Texto de velocidad y tiempo restante para la barra de estado (vacío hasta tener datos fiables)."""
+    if done < 5 or elapsed <= 0:
+        return ""
+    rate = done / elapsed
+    remaining = (total - done) / rate
+    return f" · {rate / max(fps, 1):.2f}x tiempo real · quedan {_fmt(remaining)}"
 
 
 def _open_folder(path: Path):

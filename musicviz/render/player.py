@@ -118,9 +118,17 @@ def window_size(width: int, height: int, screen_w: int, screen_h: int, margin: f
     return max(int(round(width * k)), 64), max(int(round(height * k)), 36)
 
 
-def run_player(project: ProjectConfig, features: AudioFeatures, start: float = 0.0, with_audio: bool = True, title: Optional[str] = None) -> None:
+def run_player(
+    project: ProjectConfig,
+    features: AudioFeatures,
+    start: float = 0.0,
+    with_audio: bool = True,
+    title: Optional[str] = None,
+    loop: Optional[tuple[float, float]] = None,
+) -> None:
     """Abre la ventana y reproduce hasta que el usuario la cierra (ESC/Q), ESPACIO pausa, ←/→ ±5 s,
-    Inicio vuelve al principio, F alterna pantalla completa. Bloquea hasta cerrar la ventana."""
+    Inicio vuelve al principio, F alterna pantalla completa. Con `loop` = (a, b) repite ese tramo.
+    Bloquea hasta cerrar la ventana."""
     import glfw
     import moderngl
 
@@ -205,6 +213,9 @@ def run_player(project: ProjectConfig, features: AudioFeatures, start: float = 0
         try:
             while not glfw.window_should_close(win):
                 t = media_time()
+                if loop is not None and t >= loop[1]:
+                    set_time(loop[0])
+                    t = media_time()
                 if t >= features.duration:
                     break
                 index = int(t * fps)
@@ -244,14 +255,16 @@ def player_available() -> bool:
 
 
 # ---------------------------------------------------------------- proceso aparte (para la interfaz)
-def _player_main(project_json: str, features: AudioFeatures, start: float, with_audio: bool) -> None:
+def _player_main(project_json: str, features: AudioFeatures, start: float, with_audio: bool, loop: Optional[tuple[float, float]]) -> None:
     project = ProjectConfig.model_validate_json(project_json)
-    run_player(project, features, start=start, with_audio=with_audio)
+    run_player(project, features, start=start, with_audio=with_audio, loop=loop)
 
 
-def launch_player(project: ProjectConfig, features: AudioFeatures, start: float = 0.0, with_audio: bool = True) -> mp.Process:
+def launch_player(
+    project: ProjectConfig, features: AudioFeatures, start: float = 0.0, with_audio: bool = True, loop: Optional[tuple[float, float]] = None
+) -> mp.Process:
     """Abre el reproductor en un proceso nuevo y devuelve el proceso (terminarlo cierra la ventana)."""
     ctx = mp.get_context("spawn")
-    proc = ctx.Process(target=_player_main, args=(project.model_dump_json(), features, start, with_audio), name="musicviz-player", daemon=True)
+    proc = ctx.Process(target=_player_main, args=(project.model_dump_json(), features, start, with_audio, loop), name="musicviz-player", daemon=True)
     proc.start()
     return proc
