@@ -33,7 +33,7 @@ cd "$SRC"
   --enable-zlib --enable-libx264 --enable-libvpx --enable-libopus \
   --enable-swscale --enable-swresample --enable-avfilter \
   --enable-avdevice --enable-indev=lavfi \
-  --enable-protocol=file,pipe \
+  --enable-protocol=file,pipe,fd \
   --enable-decoder="$DECODERS" --enable-encoder="$ENCODERS" \
   --enable-demuxer="$DEMUXERS" --enable-muxer="$MUXERS" \
   --enable-parser="$PARSERS" --enable-bsf="$BSFS" --enable-filter="$FILTERS" \
