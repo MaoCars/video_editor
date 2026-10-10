@@ -24,7 +24,7 @@ dependencies = [
 [project.optional-dependencies]
 cpu = ["opencv-python-headless>=4.8"]  # backend de render por CPU (sin GPU/OpenGL)
 preview-audio = ["sounddevice>=0.4"]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "pytest-timeout>=2.1"]
 
 [project.scripts]
 musicviz = "musicviz.cli:main"
@@ -37,4 +37,6 @@ include = ["musicviz*"]
 musicviz = ["presets/*.yaml"]
 
 [tool.pytest.ini_options]
+timeout = 600  # una prueba colgada falla con su traza en vez de bloquear el job de CI
+timeout_method = "thread"
 testpaths = ["tests"]
