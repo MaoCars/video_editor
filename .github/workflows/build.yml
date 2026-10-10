@@ -6,6 +6,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: write  # necesario para adjuntar el ZIP al release cuando se publica una etiqueta v*
+
 jobs:
   windows:
     runs-on: windows-latest
