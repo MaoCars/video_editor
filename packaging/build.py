@@ -68,6 +68,20 @@ def add_ffmpeg() -> None:
             print("  copiado ffmpeg desde", path)
 
 
+def add_ffmpeg_from(path: Path) -> None:
+    """Incluye un ffmpeg ya compilado (p. ej. el build mínimo de packaging/ffmpeg/build_ffmpeg.sh)."""
+    bin_dir = DIST / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    target = bin_dir / ("ffmpeg.exe" if platform.system() == "Windows" else "ffmpeg")
+    shutil.copy2(path, target)
+    (bin_dir / "LICENCIA-ffmpeg.txt").write_text(
+        "ffmpeg incluido: build mínimo compilado desde las fuentes oficiales (https://ffmpeg.org) con "
+        "packaging/ffmpeg/build_ffmpeg.sh (libx264, libvpx, libopus, NVENC); licencia GPL v2+.\n",
+        encoding="utf-8",
+    )
+    print("  incluido ffmpeg desde", path, f"({target.stat().st_size / 1e6:.1f} MB)")
+
+
 def make_zip() -> Path:
     tag = {"Windows": "windows", "Linux": "linux", "Darwin": "macos"}.get(platform.system(), platform.system().lower())
     out = ROOT / "dist" / f"musicviz-{version()}-{tag}-x64"
@@ -78,11 +92,14 @@ def make_zip() -> Path:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ffmpeg", action="store_true", help="Incluir ffmpeg/ffprobe junto a la aplicación")
+    ap.add_argument("--ffmpeg", action="store_true", help="Incluir ffmpeg junto a la aplicación (descarga el build 'essentials' en Windows)")
+    ap.add_argument("--ffmpeg-exe", type=Path, help="Incluir este ffmpeg ya compilado (p. ej. el build mínimo de CI)")
     ap.add_argument("--zip", action="store_true", help="Comprimir el resultado")
     args = ap.parse_args()
     build()
-    if args.ffmpeg:
+    if args.ffmpeg_exe:
+        add_ffmpeg_from(args.ffmpeg_exe)
+    elif args.ffmpeg:
         add_ffmpeg()
     if args.zip:
         make_zip()
