@@ -24,6 +24,7 @@ from ..layers.keyframes import current_value
 from ..layers.text import available_fonts
 from ..presets import load_preset, preset_names
 from ..render.canvas import over_checkerboard
+from . import autosave
 from .fields import FieldSpec, apply_value, field_specs, format_value, replace_submodel
 from .recent import add_recent, clear_recent, load_recent, remove_recent
 from .renderer import RenderService
@@ -368,6 +369,11 @@ class App(tk.Tk):
         self._cancel_event = threading.Event()
         self._photo: Optional[ImageTk.PhotoImage] = None
         self._suspend_traces = False
+        self._undo: list[str] = []  # historial de deshacer/rehacer: instantáneas JSON del proyecto
+        self._redo: list[str] = []
+        self._snapshot = self.project.model_dump_json()
+        self._autosave_after: Optional[str] = None
+        self._settle_after: Optional[str] = None
 
         self._build_menu()
         self._build_ui()
@@ -377,6 +383,7 @@ class App(tk.Tk):
             self._open_project(Path(project_path))
         else:
             self._refresh_all()
+        self.after(300, self._offer_recovery)
 
     # ------------------------------------------------------------------ construcción UI
     def _build_menu(self):
@@ -392,6 +399,10 @@ class App(tk.Tk):
         m.add_separator()
         m.add_command(label="Salir", command=self._on_close)
         menubar.add_cascade(label="Archivo", menu=m)
+        self.edit_menu = tk.Menu(menubar, tearoff=0)
+        self.edit_menu.add_command(label="Deshacer", command=self._undo_cmd, accelerator="Ctrl+Z", state="disabled")
+        self.edit_menu.add_command(label="Rehacer", command=self._redo_cmd, accelerator="Ctrl+Y", state="disabled")
+        menubar.add_cascade(label="Editar", menu=self.edit_menu)
         h = tk.Menu(menubar, tearoff=0)
         h.add_command(label="Comprobar entorno (ffmpeg / NVENC)", command=self._check_env)
         h.add_command(label="Acerca de", command=lambda: messagebox.showinfo("musicviz", "musicviz — generador de videos music visualizer.\nEdita el proyecto a la izquierda, mira la vista previa a la derecha y pulsa Renderizar."))
@@ -400,6 +411,9 @@ class App(tk.Tk):
         self.bind_all("<Control-n>", lambda e: self._new_from_preset())
         self.bind_all("<Control-o>", lambda e: self._open_dialog())
         self.bind_all("<Control-s>", lambda e: self._save())
+        self.bind_all("<Control-z>", self._undo_cmd)
+        self.bind_all("<Control-y>", self._redo_cmd)
+        self.bind_all("<Control-Shift-Z>", self._redo_cmd)
 
     def _build_ui(self):
         top = ttk.Frame(self, padding=(8, 6))
@@ -607,6 +621,103 @@ class App(tk.Tk):
     def _mark_dirty(self):
         self.dirty = True
         self._update_title()
+        self._record_history()
+        self._schedule_autosave()
+
+    # ------------------------------------------------------------------ deshacer / rehacer
+    def _record_history(self):
+        """Guarda el estado anterior del proyecto si ha cambiado (una entrada por cambio, no por arrastre)."""
+        cur = self.project.model_dump_json()
+        if cur == self._snapshot:
+            return
+        self._undo.append(self._snapshot)
+        del self._undo[:-100]
+        self._redo.clear()
+        self._snapshot = cur
+        self._update_edit_menu()
+
+    def _reset_history(self):
+        self._undo.clear()
+        self._redo.clear()
+        self._snapshot = self.project.model_dump_json()
+        self._update_edit_menu()
+
+    def _update_edit_menu(self):
+        if hasattr(self, "edit_menu"):
+            self.edit_menu.entryconfigure(0, state="normal" if self._undo else "disabled")
+            self.edit_menu.entryconfigure(1, state="normal" if self._redo else "disabled")
+
+    def _undo_cmd(self, event=None):
+        if isinstance(getattr(event, "widget", None), tk.Text):
+            return  # los cuadros de texto tienen su propio deshacer
+        if not self._undo:
+            self._set_status("Nada que deshacer")
+            return "break"
+        self._redo.append(self.project.model_dump_json())
+        self._restore_snapshot(self._undo.pop(), "Deshecho")
+        return "break"
+
+    def _redo_cmd(self, event=None):
+        if isinstance(getattr(event, "widget", None), tk.Text):
+            return
+        if not self._redo:
+            self._set_status("Nada que rehacer")
+            return "break"
+        self._undo.append(self.project.model_dump_json())
+        self._restore_snapshot(self._redo.pop(), "Rehecho")
+        return "break"
+
+    def _restore_snapshot(self, snapshot: str, label: str):
+        if self._playing:
+            self._stop_play()
+        self.project = ProjectConfig.model_validate_json(snapshot)
+        self._snapshot = snapshot
+        self.dirty = True
+        self._update_edit_menu()
+        self._refresh_all()
+        self._schedule_autosave()
+        self._set_status(f"{label} ({len(self._undo)} pasos atrás, {len(self._redo)} adelante)")
+
+    # ------------------------------------------------------------------ autoguardado
+    def _schedule_autosave(self, delay_ms: int = 3000):
+        if self._autosave_after is not None:
+            self.after_cancel(self._autosave_after)
+        self._autosave_after = self.after(delay_ms, self._autosave_now)
+
+    def _autosave_now(self):
+        self._autosave_after = None
+        if not self.dirty:
+            return
+        try:
+            autosave.write(self.project, self.project_path)
+        except Exception as exc:  # noqa: BLE001 - nunca debe molestar al usuario
+            print(f"autoguardado: {exc}", file=sys.stderr)
+
+    def _offer_recovery(self):
+        """Al arrancar: si quedó un proyecto sin guardar de la sesión anterior, ofrece recuperarlo."""
+        info = autosave.pending()
+        if info is None:
+            return
+        if not self._ask_recover(info):
+            autosave.clear()
+            return
+        try:
+            project = autosave.load()
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Recuperar proyecto", f"No se pudo leer el autoguardado:\n{exc}", parent=self)
+            autosave.clear()
+            return
+        self.project = project
+        self.project_path = Path(info["original"]) if info.get("original") else None
+        self.dirty = True
+        self._reset_history()
+        self._refresh_all()
+        self._set_status("Proyecto recuperado del autoguardado (sin guardar todavía)")
+
+    def _ask_recover(self, info: dict) -> bool:
+        when = time.strftime("%d/%m/%Y %H:%M", time.localtime(info.get("time", 0)))
+        origin = f"\n\nVenía de: {info['original']}" if info.get("original") else "\n\n(Era un proyecto nuevo sin guardar)"
+        return messagebox.askyesno("Recuperar proyecto", f"Hay un proyecto sin guardar de la sesión anterior ({when}).{origin}\n\n¿Quieres recuperarlo?", parent=self)
 
     def _update_title(self):
         name = self.project_path.name if self.project_path else "sin guardar"
@@ -859,7 +970,7 @@ class App(tk.Tk):
         self.time_var.set(t)
         self._update_time_label()
         if not self._playing:
-            self._request_preview(force=True)
+            self._request_preview(force=True, quick=True)
 
     def _tl_select(self, kind: str, idx: int):
         self.nb.select(1 if kind == "layers" else 2)
@@ -941,6 +1052,8 @@ class App(tk.Tk):
         self.project = load_preset(self.preset_var.get(), audio, out)
         self.project_path = None
         self.dirty = False
+        self._reset_history()
+        autosave.clear()
         self._refresh_all()
 
     def _apply_preset(self):
@@ -969,6 +1082,8 @@ class App(tk.Tk):
             return
         self.project_path = path
         self.dirty = False
+        self._reset_history()
+        autosave.clear()
         self._remember(path)
         self._refresh_all()
 
@@ -982,6 +1097,7 @@ class App(tk.Tk):
             return False
         self.dirty = False
         self._update_title()
+        autosave.clear()
         self._remember(self.project_path)
         self._set_status(f"Guardado en {self.project_path}")
         return True
@@ -1013,14 +1129,28 @@ class App(tk.Tk):
         f = self.project.audio.file
         return bool(f) and Path(f).is_file()
 
-    def _request_preview(self, force: bool = False):
+    def _request_preview(self, force: bool = False, quick: bool = False):
+        """Pide una vista previa. Con `quick` se renderiza a baja resolución (arrastres) y, al parar
+        de arrastrar medio segundo, se vuelve a pedir a la calidad elegida."""
         if self._playing:
             return
         if not force and not self.auto_var.get():
             return
+        if quick:
+            self._quick_preview = True
+            if self._settle_after is not None:
+                self.after_cancel(self._settle_after)
+            self._settle_after = self.after(500, self._settle_preview)
         if self._preview_after is not None:
             self.after_cancel(self._preview_after)
-        self._preview_after = self.after(150 if force else 600, self._run_preview)
+        self._preview_after = self.after(30 if quick else (150 if force else 600), self._run_preview)
+
+    def _settle_preview(self):
+        self._settle_after = None
+        if self._pdrag is not None:
+            return  # sigue arrastrando una capa: la liberación ya pide la vista completa
+        self._quick_preview = False
+        self._request_preview(force=True)
 
     def _run_preview(self):
         self._preview_after = None
@@ -1269,7 +1399,7 @@ class App(tk.Tk):
     def _on_time_drag(self):
         self._update_time_label()
         if not self._playing:
-            self._request_preview(force=True)
+            self._request_preview(force=True, quick=True)
 
     def _update_time_label(self):
         total = self._features.duration if self._features else 0.0
@@ -1557,6 +1687,7 @@ class App(tk.Tk):
             return
         self._stop_play()
         self._close_player()
+        autosave.clear()
         self.renderer.shutdown()
         self.destroy()
 

@@ -227,3 +227,67 @@ def test_gui_opens_gl_player_window(app, monkeypatch):
     assert proc.is_alive() and app.window_btn.cget("text") == "■ Cerrar ventana"
     app._toggle_player()  # cierra la ventana
     assert not proc.is_alive() and app._player_proc is None and app.window_btn.cget("text") == "⧉ Ventana GL"
+
+
+def test_gui_undo_redo_and_autosave(app, tmp_path, monkeypatch):
+    from musicviz.config import GlitchEffect
+    from musicviz.gui import autosave
+
+    assert _pump(app, lambda: app._features is not None)
+    n = len(app.project.effects)
+    app._add_item("effects", GlitchEffect)
+    app._dup_item("effects")
+    assert len(app.project.effects) == n + 2 and len(app._undo) == 2
+    app._undo_cmd()
+    assert len(app.project.effects) == n + 1
+    app._undo_cmd()
+    assert len(app.project.effects) == n and len(app._redo) == 2
+    app._undo_cmd()  # nada más que deshacer: no falla
+    app._redo_cmd()
+    assert len(app.project.effects) == n + 1 and app.project.effects[-1].type == "glitch"
+    app._add_item("effects", GlitchEffect)  # un cambio nuevo descarta el "rehacer"
+    assert not app._redo and app.edit_menu.entrycget(1, "state") == "disabled"
+    # el autoguardado se escribe poco después del cambio y se borra al guardar
+    assert _pump(app, lambda: autosave.pending() is not None, timeout=15)
+    info = autosave.pending()
+    assert info["original"] and info["original"].endswith("proyecto.yaml")
+    assert autosave.load().effects[-1].type == "glitch"
+    app._save()
+    assert autosave.pending() is None
+
+
+def test_gui_offers_recovery_on_start(audio_cfg, tmp_path, monkeypatch):
+    monkeypatch.setenv("MUSICVIZ_CONFIG_DIR", str(tmp_path / "cfg"))
+    from musicviz.gui import autosave
+    from musicviz.gui.app import App
+    from musicviz.presets import load_preset
+
+    project = load_preset("minimal", audio_cfg.file, str(tmp_path / "rec.mp4"))
+    project.output.width, project.output.height, project.output.fps = 320, 180, 30
+    project.name = "recuperado"
+    autosave.write(project, tmp_path / "original.yaml")
+    asked = []
+    monkeypatch.setattr(App, "_ask_recover", lambda self, info: asked.append(info) or True)
+    try:
+        app = App(None)
+    except tk.TclError as exc:
+        pytest.skip(f"sin pantalla disponible: {exc}")
+    try:
+        assert _pump(app, lambda: bool(asked), timeout=10)
+        app.update()
+        assert app.project.name == "recuperado" and app.dirty
+        assert app.project_path == tmp_path / "original.yaml"
+        assert not app._undo  # el historial empieza limpio
+    finally:
+        app.dirty = False
+        app._stop_play()
+        app.destroy()
+    assert autosave.pending() is not None  # sigue ahí hasta que se guarde o se cierre limpiamente
+
+
+def test_gui_quick_preview_while_scrubbing(app):
+    assert _pump(app, lambda: app._photo is not None)
+    app.time_var.set(1.0)
+    app._on_time_drag()
+    assert app._quick_preview and app._settle_after is not None
+    assert _pump(app, lambda: not app._quick_preview and app._settle_after is None, timeout=10)
