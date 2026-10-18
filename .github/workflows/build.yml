@@ -5,6 +5,11 @@ on:
     branches: [main]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Etiqueta de un release existente al que adjuntar el ZIP (p. ej. v0.2.0); vacío = sólo artefacto"
+        required: false
+        default: ""
 
 permissions:
   contents: write  # necesario para adjuntar el ZIP al release cuando se publica una etiqueta v*
@@ -23,23 +28,25 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ffmpeg-min
-          key: ffmpeg-min-${{ env.FFMPEG_VERSION }}-${{ hashFiles('packaging/ffmpeg/build_ffmpeg.sh') }}-v1
+          key: ffmpeg-min-${{ env.FFMPEG_VERSION }}-${{ hashFiles('packaging/ffmpeg/build_ffmpeg.sh') }}-ucrt64-v2
       - uses: actions/checkout@v4
         if: steps.cache.outputs.cache-hit != 'true'
         with:
           repository: FFmpeg/FFmpeg
           ref: n${{ env.FFMPEG_VERSION }}
           path: ffmpeg-src
+      # UCRT64: MSYS2 ya no publica x264 para el entorno MINGW64 (sólo ucrt64/clang64/clangarm64).
+      # El runtime UCRT viene de serie en Windows 10 y 11.
       - uses: msys2/setup-msys2@v2
         if: steps.cache.outputs.cache-hit != 'true'
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
           install: >-
             make diffutils pkgconf
-            mingw-w64-x86_64-gcc mingw-w64-x86_64-nasm mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-x264 mingw-w64-x86_64-libvpx mingw-w64-x86_64-opus mingw-w64-x86_64-zlib
-            mingw-w64-x86_64-ffnvcodec-headers
+            mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-nasm mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-libx264 mingw-w64-ucrt-x86_64-libvpx mingw-w64-ucrt-x86_64-opus
+            mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-ffnvcodec-headers
       - name: Compilar ffmpeg con sólo lo que usa musicviz
         if: steps.cache.outputs.cache-hit != 'true'
         shell: msys2 {0}
@@ -57,10 +64,14 @@ jobs:
 
   windows:
     needs: ffmpeg
+    # Si el ffmpeg mínimo no se pudo compilar, se empaqueta igualmente con el ffmpeg "essentials" descargado:
+    # un release nunca debe quedarse sin ZIP.
+    if: ${{ !cancelled() }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
+        if: needs.ffmpeg.result == 'success'
         with:
           name: ffmpeg-min
           path: ffmpeg-min
@@ -72,7 +83,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e . pyinstaller
       - name: Construir ejecutable con el ffmpeg mínimo incluido
-        run: python packaging/build.py --ffmpeg-exe ffmpeg-min/ffmpeg.exe --zip
+        run: |
+          if (Test-Path ffmpeg-min/ffmpeg.exe) {
+            python packaging/build.py --ffmpeg-exe ffmpeg-min/ffmpeg.exe --zip
+          } else {
+            Write-Output "::warning::No se compiló el ffmpeg mínimo; se incluye el ffmpeg 'essentials' (ZIP más pesado)"
+            python packaging/build.py --ffmpeg --zip
+          }
       - name: Probar el ejecutable
         run: |
           dist\musicviz\musicviz.exe --version
@@ -83,8 +100,9 @@ jobs:
         with:
           name: musicviz-windows
           path: dist/*.zip
-      - name: Publicar release (sólo etiquetas v*)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publicar release (etiquetas v*, o la etiqueta indicada al lanzarlo a mano)
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag != '' && inputs.tag || github.ref_name }}
           files: dist/*.zip
