@@ -328,3 +328,56 @@ def test_eta_text():
     assert _eta_text(2, 100, 1.0, 30) == ""
     txt = _eta_text(50, 100, 10.0, 30)
     assert "quedan 0:10" in txt and "0.17x" in txt
+
+
+class _FakeSD:
+    """Sustituto de sounddevice que registra lo que se reproduce."""
+
+    __version__ = "fake"
+
+    def __init__(self):
+        self.calls = []
+
+    def play(self, data, sr):
+        self.calls.append(("play", len(data), sr))
+
+    def stop(self):
+        self.calls.append(("stop",))
+
+    def query_devices(self, kind=None):
+        return {"name": "Altavoces de prueba"}
+
+
+def test_gui_playback_sends_song_to_audio_output(app, monkeypatch):
+    """Al pulsar Reproducir la canción suena desde el instante actual (regresión: el ejecutable no tenía audio)."""
+    from musicviz.audio import playback
+
+    fake = _FakeSD()
+    monkeypatch.setattr(playback, "load_sounddevice", lambda: fake)
+    assert _pump(app, lambda: app._features is not None)
+    feats = app._features
+    app.time_var.set(1.0)
+    app._start_play()
+    assert _pump(app, lambda: any(c[0] == "play" for c in fake.calls), timeout=20), app.status_var.get()
+    play = next(c for c in fake.calls if c[0] == "play")
+    assert play[2] == feats.sr
+    assert abs(play[1] - (len(feats.waveform) - int(1.0 * feats.sr))) <= 1  # empieza en el segundo 1
+    app._stop_play()
+    assert fake.calls[-1] == ("stop",)
+    assert "sin audio" not in app.status_var.get().lower()
+
+
+def test_gui_playback_reports_missing_audio_device(app, monkeypatch):
+    from musicviz.audio import playback
+
+    class NoDevice(_FakeSD):
+        def play(self, data, sr):
+            raise RuntimeError("Error opening OutputStream: Invalid device")
+
+    monkeypatch.setattr(playback, "load_sounddevice", lambda: NoDevice())
+    assert _pump(app, lambda: app._features is not None)
+    app._start_play()
+    assert _pump(app, lambda: "sin audio" in app.status_var.get().lower(), timeout=20)
+    assert "salida de sonido" in app.status_var.get()
+    assert app._playing  # la imagen sigue reproduciéndose
+    app._stop_play()

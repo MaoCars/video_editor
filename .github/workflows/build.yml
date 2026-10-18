@@ -93,7 +93,7 @@ jobs:
       - name: Probar el ejecutable
         run: |
           dist\musicviz\musicviz.exe --version
-          dist\musicviz\musicviz.exe check
+          dist\musicviz\musicviz.exe check --require audio --require glfw
           dist\musicviz\musicviz.exe presets
       - name: Subir ZIP como artefacto
         uses: actions/upload-artifact@v4

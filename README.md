@@ -48,7 +48,6 @@ Para crear el ejecutable tú mismo: `build_exe.bat` (o `python packaging/build.p
    python -m venv .venv
    .\.venv\Scripts\activate
    pip install -e .
-   pip install sounddevice   # opcional: audio en la vista previa
    pip install -e .[cpu]     # opcional: backend de render por CPU (OpenCV) para equipos sin OpenGL 3.3
    ```
 4. Verifica el entorno:
@@ -90,7 +89,7 @@ musicviz gui mi_video.yaml   # abrir un proyecto existente
   Los campos de colores muestran una fila de muestras: clic en una muestra para cambiarla, **×** para quitarla,
   **+** para añadir con el selector de color y **⇄** para invertir el degradado.
 - **Vista previa**: se actualiza sola al cambiar cualquier valor (casilla *Auto*), con control de tiempo,
-  calidad y botón *Reproducir* (con audio si instalaste `sounddevice`). Mientras arrastras el tiempo o una capa se
+  calidad y botón *Reproducir* con el audio de la canción. Mientras arrastras el tiempo o una capa se
   renderiza a baja resolución y, al soltar, a la calidad elegida.
 - **Ventana GL**: abre un reproductor OpenGL en una ventana aparte a la resolución real del proyecto (1080p, 4K…),
   dibujado directamente por la GPU sin pasar por la CPU: lo que ves es exactamente el render final, a la velocidad

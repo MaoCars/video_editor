@@ -261,8 +261,12 @@ def gui(project: Optional[Path] = typer.Argument(None, help="Proyecto YAML a abr
 
 
 @app.command()
-def check():
-    """Comprueba ffmpeg, encoders (NVENC) y CPUs disponibles."""
+def check(
+    require: Optional[list[str]] = typer.Option(
+        None, "--require", help="Falla (código 1) si falta este componente: audio, glfw. Se puede repetir."
+    ),
+):
+    """Comprueba ffmpeg, encoders (NVENC), GPU, audio de la vista previa y CPUs disponibles."""
     import os
 
     from .render.exporter import ExportError, available_encoders, encoder_works, ffmpeg_path
@@ -294,13 +298,22 @@ def check():
         table.add_row("Backend CPU (OpenCV)", cv2.__version__)
     else:
         table.add_row("Backend CPU (OpenCV)", "[yellow]no instalado: sólo render por GPU (pip install opencv-python-headless)[/yellow]")
-    try:
-        import sounddevice  # noqa: F401
+    from .audio.playback import audio_status
 
-        table.add_row("sounddevice (audio en preview)", "instalado")
-    except ImportError:
-        table.add_row("sounddevice (audio en preview)", "[yellow]opcional, no instalado[/yellow]")
+    audio_ok, audio_txt = audio_status()
+    table.add_row("Audio de la vista previa", audio_txt if audio_ok else f"[red]{audio_txt}[/red]")
     console.print(table)
+    missing = []
+    for req in require or []:
+        if req == "audio" and not audio_ok:
+            missing.append("audio (sounddevice + PortAudio)")
+        elif req == "glfw" and not player_available():
+            missing.append("glfw (ventana OpenGL)")
+        elif req not in ("audio", "glfw"):
+            raise typer.BadParameter(f"--require: valor desconocido {req!r} (usa audio o glfw)")
+    if missing:
+        console.print(f"[red]Faltan componentes obligatorios: {', '.join(missing)}[/red]")
+        raise typer.Exit(1)
 
 
 def main() -> None:

@@ -20,7 +20,7 @@ binaries = collect_dynamic_libs("glfw")
 hiddenimports = (
     collect_submodules("musicviz")
     + collect_submodules("glcontext")
-    + ["moderngl", "glcontext", "glfw", "PIL.ImageTk", "PIL._tkinter_finder", "soundfile", "yaml"]
+    + ["moderngl", "glcontext", "glfw", "sounddevice", "_cffi_backend", "PIL.ImageTk", "PIL._tkinter_finder", "soundfile", "yaml"]
 )
 excludes = ["cv2", "tests", "pytest", "matplotlib", "IPython", "jupyter", "notebook", "pandas", "sklearn", "torch", "tensorflow", "scipy", "tkinter.test", "unittest", "pydoc_data", "lib2to3"]
 

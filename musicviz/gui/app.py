@@ -1462,12 +1462,9 @@ class App(tk.Tk):
 
     def _stop_play(self):
         self._playing = False
-        try:
-            import sounddevice as sd
+        from ..audio import playback
 
-            sd.stop()
-        except Exception:  # noqa: BLE001
-            pass
+        playback.stop()
         self.play_btn.configure(text="▶ Reproducir")
 
     # ------------------------------------------------------------------ bucle A-B
@@ -1577,16 +1574,17 @@ class App(tk.Tk):
         try:
             feats = self._service_features(svc, project)
             scene = svc.scene_for(project, scale)
+            from ..audio import playback
+
             audio_ok = False
             sd = None
             try:
-                import sounddevice as sd
-
-                sd.play(feats.waveform[int(start * feats.sr) :], feats.sr)
+                sd = playback.play(feats.waveform, feats.sr, start)
                 audio_ok = True
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - sin audio se sigue reproduciendo la imagen
                 sd = None
-                self._queue.put(("status", "Reproduciendo sin audio (instala `sounddevice` para oírlo)"))
+                print(f"audio de la vista previa: {exc!r}", file=sys.stderr)
+                self._queue.put(("status", playback.describe_error(exc)))
             t0 = time.perf_counter()
             last_frame = -1
             while self._playing:
@@ -1596,8 +1594,7 @@ class App(tk.Tk):
                     last_frame = -1
                     if sd is not None:
                         try:
-                            sd.stop()
-                            sd.play(feats.waveform[int(start * feats.sr) :], feats.sr)
+                            playback.play(feats.waveform, feats.sr, start)
                         except Exception:  # noqa: BLE001
                             pass
                 if t >= feats.duration:
@@ -1782,12 +1779,9 @@ class App(tk.Tk):
         except ExportError as exc:
             lines.append(str(exc))
         lines.append(f"CPUs: {os.cpu_count()}")
-        try:
-            import sounddevice  # noqa: F401
+        from ..audio.playback import audio_status
 
-            lines.append("sounddevice: instalado (audio en la vista previa)")
-        except ImportError:
-            lines.append("sounddevice: no instalado → `pip install sounddevice` para oír la vista previa")
+        lines.append(f"Audio de la vista previa: {audio_status()[1]}")
         messagebox.showinfo("Entorno", "\n".join(lines), parent=self)
 
     def _on_close(self):

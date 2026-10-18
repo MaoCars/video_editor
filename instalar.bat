@@ -43,7 +43,6 @@ if not exist ".venv\Scripts\python.exe" (
 echo [..] Instalando musicviz y sus dependencias (puede tardar unos minutos)...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip >nul
 ".venv\Scripts\python.exe" -m pip install -e . || ( echo [X] Fallo la instalacion de dependencias & pause & exit /b 1 )
-".venv\Scripts\python.exe" -m pip install sounddevice >nul 2>nul
 
 rem ---- 4) comprobacion
 echo.

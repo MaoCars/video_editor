@@ -87,12 +87,16 @@ class _Audio:
         self.features = features
         self.ok = False
         try:
-            import sounddevice as sd
+            from ..audio.playback import load_sounddevice
 
+            sd = load_sounddevice()
             self.sd = sd
             sd.check_output_settings(samplerate=features.sr)
             self.ok = True
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - sin audio la ventana sigue reproduciendo la imagen
+            import sys
+
+            print(f"Ventana OpenGL sin audio: {exc!r}", file=sys.stderr)
             self.sd = None
 
     def play_from(self, t: float) -> None:

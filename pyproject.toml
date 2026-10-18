@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "musicviz"
-version = "0.2.0"
+version = "0.2.1"
 description = "Generador de videos music visualizer (espectros, partículas, glitch) estilo Trap Nation / Monstercat / NCS"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,11 +19,12 @@ dependencies = [
     "pillow>=10.1",
     "moderngl>=5.8",
     "glfw>=2.6",
+    "sounddevice>=0.4",  # audio de la vista previa (incluye PortAudio en Windows/macOS)
 ]
 
 [project.optional-dependencies]
 cpu = ["opencv-python-headless>=4.8"]  # backend de render por CPU (sin GPU/OpenGL)
-preview-audio = ["sounddevice>=0.4"]
+preview-audio = []  # obsoleto: sounddevice ya es una dependencia normal
 dev = ["pytest>=7.0", "pytest-timeout>=2.1"]
 
 [project.scripts]
